@@ -1,0 +1,72 @@
+**************ThyssenKrupp BASE- SAP Program Header*********************
+*
+*
+*  Name:           I_SCM-PP_0117_TOMIS-ECC_Batch Characteristics Update
+*
+*  Application:    Interface
+*  Module Team:    SCM-PP
+*
+*
+*
+*  CR-ID:         I_SCM-PP_0117
+*  Transport-ID:  BE1K903982
+*  Requester:
+*
+*  Programmer:    Arun Biradar
+*
+*
+*  Short description
+* This interface will be the inbound interface (TOMIS to SAP ECC) for updating the
+* Batch characteristics in case of semi-finished or finished products
+* which are declared as downgraded or scrap.
+************************************************************************
+**************ThyssenKrupp BASE - SAP Change Log************************
+*
+*
+*  CR-ID:
+*  Transport-ID:
+*  Requester:     <name of the requester>
+*  Programmer:    <name of the programmer>
+*
+*
+*  Version:       V1.0         Date: 01.06.2016
+*
+*  Short description
+*
+*
+************************************************************************
+*&---------------------------------------------------------------------*
+*&  Include           YPPST_BATCHUP_TOP
+*&---------------------------------------------------------------------*
+
+*- Selection screen
+
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-007.
+
+SELECT-OPTIONS: s_satzty FOR lcl_batch_data=>gv_satzty DEFAULT ycl_ppst_tomis_i_prodconf=>c_satztyp_a,
+                s_vorgan FOR lcl_batch_data=>gv_vorgan DEFAULT ycl_ppst_tomis_i_prodconf=>c_process_n,
+                s_meldun FOR lcl_batch_data=>gv_y_id_meldung,
+                s_batch  FOR lcl_batch_data=>gv_batch,
+                s_ident  FOR lcl_batch_data=>gv_ident,
+                s_fls    FOR lcl_batch_data=>gv_fls_ident,
+                s_date   FOR lcl_batch_data=>gv_date,
+*BOC for Cl#8
+                s_clust  FOR lcl_batch_data=>gv_clust NO INTERVALS.
+*EOC for CL#8
+
+PARAMETERS: p_data  AS CHECKBOX DEFAULT abap_true,
+            p_batch AS CHECKBOX DEFAULT abap_true,
+            p_scrap AS CHECKBOX DEFAULT abap_true,
+            p_proc  TYPE mode DEFAULT ycl_ppst_tomis_i_prodconf=>c_process_n OBLIGATORY.
+* Begin of change CL#4
+*PARAMETERS: p_call TYPE char1 NO-DISPLAY.
+* End of change CL#4
+SELECTION-SCREEN END OF BLOCK b1.
+
+AT SELECTION-SCREEN OUTPUT.
+  LOOP AT SCREEN.
+    IF screen-name CP '*S_SATZTY*'.
+      screen-input = 0.
+      MODIFY SCREEN.
+    ENDIF.
+  ENDLOOP.

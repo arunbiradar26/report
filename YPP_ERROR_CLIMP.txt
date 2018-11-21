@@ -1,0 +1,3749 @@
+*&---------------------------------------------------------------------*
+*&  Include           YPPST_DS_ERROR_CLIMP
+*&---------------------------------------------------------------------*
+**************ThyssenKrupp BASE- SAP Program Header*********************
+*
+*
+*  Name:  E_SCM-PP_0077 - Downstream Error Handling Cockpit
+*
+*  Application: Enhancement
+*  Module Team: SCM-PP
+*
+*
+*
+*  CR-ID: E_SCM-PP_0077
+*  Transport-ID: BE1K928970
+*  Requester: Andreas K
+*
+*  Programmer: Arun Biradar
+*
+*
+*  Short description: To enable central monitoring and correction of errors
+*  that appear in SAP ECC related to the TOMIS Interface and the processing
+*    of Downstream data.
+************************************************************************
+**************ThyssenKrupp BASE - SAP Change Log************************
+*
+*
+*  CR-ID:         E_SCM-PP_0077
+*  Transport-ID:
+*  Requester:     <name of the requester>
+*  Programmer:    <name of the programmer>
+*
+*
+*  Version:       V1.0         Date:
+*
+*  Short description
+*
+***************************************************************************
+*&---------------------------------------------------------------------*
+*&       Class (Implementation)  lcl_ds_error
+*&---------------------------------------------------------------------*
+*        Text
+*----------------------------------------------------------------------*
+
+CLASS lcl_ds_error IMPLEMENTATION.
+  METHOD constructor.
+
+    DATA: lo_new_type TYPE REF TO cl_abap_structdescr,
+          lo_new_tab  TYPE REF TO cl_abap_tabledescr,
+          lo_data     TYPE REF TO data,
+          lo_line     TYPE REF TO data.
+*//TOMIS internal ID
+    me->gt_id_meldung  = it_id_meldung.
+*// Date
+    me->gt_date      = it_date.
+*// Production date and time
+    me->gt_date_time   = it_date_time.
+*// Output Workcenter
+    me->gt_workcenter  = it_workcenter.
+*// Output TKS IDENT
+    me->gt_pss_id      = it_pss_id.
+*// FLS - ID
+    me->gt_fls_ident   = it_fls_ident.
+*// FLS Location
+    me->gt_fls_loc     = it_fls_loc.
+*// FAPO1 number
+    me->gt_fapo        = it_fapo.
+*// FAPO1 Item
+    me->gt_fapo_item   = it_fapo_item.
+*// Heat Number
+    me->gt_heat_no     = it_heat_no.
+*// max row
+    me->gt_row         = iv_maxro.
+*// Sucess
+    me->gv_sucess     = iv_succ.
+*// error
+    me->gv_error      = iv_err.
+*// Not Process
+    me->gv_not_process = iv_not_pro.
+*// Terminated Flag
+    me->gt_ter        = it_ter.
+*//  Process flag
+    me->gt_process_flag = it_process_flag.
+*// Layout
+    gv_layout = iv_layout.
+*// conf table
+    me->gt_sap_conf_table = it_sap_conf_table.
+* ALV Structure
+
+    get_alv_structure( IMPORTING et_comp   = gt_comp
+                                 et_ref    = gt_ref ).
+
+
+    IF  gt_comp[] IS NOT INITIAL.
+      lo_new_type = cl_abap_structdescr=>create( gt_comp ).
+
+      lo_new_tab = cl_abap_tabledescr=>create(
+                   p_line_type  = lo_new_type
+                   p_table_kind = cl_abap_tabledescr=>tablekind_std
+                   p_unique     = abap_false ).
+
+      CREATE DATA lo_data TYPE HANDLE lo_new_tab.
+*
+* 6. New internal table in the fieldsymbols
+      ASSIGN lo_data->* TO <gt_alv>.
+      CREATE DATA lo_line LIKE LINE OF <gt_alv>.
+      ASSIGN lo_line->* TO <gs_alv>.
+    ENDIF.
+
+**input validation
+    me->validate_input( ).
+
+*- for authorization check
+    me->check_auth( c_tcode ).
+  ENDMETHOD.
+  METHOD validate_input.
+    DATA: lv_text TYPE string.
+    CLEAR:lv_text.
+    IF me->gt_id_meldung IS INITIAL AND me->gt_date IS INITIAL AND me->gt_date_time IS INITIAL
+      AND me->gt_workcenter IS INITIAL AND me->gt_pss_id IS INITIAL AND me->gt_fls_ident IS INITIAL
+      AND me->gt_fls_loc IS INITIAL AND me->gt_fapo IS INITIAL AND me->gt_fapo_item IS INITIAL
+      AND me->gt_heat_no IS INITIAL AND gt_process_flag[] IS INITIAL.
+
+
+      MESSAGE e225(yppst) INTO lv_text.
+
+* Pop up
+      CALL FUNCTION 'POPUP_TO_INFORM'
+        EXPORTING
+          titel = TEXT-019
+          txt1  = lv_text
+          txt2  = abap_false.
+
+      CALL SELECTION-SCREEN 1000.
+
+    ENDIF.
+
+  ENDMETHOD.
+  METHOD check_auth.
+* Description        : To check the auth
+
+** Local data declaration
+    DATA lv_msgv1 TYPE symsgv.
+
+** User should have authorization to transaction
+    CALL FUNCTION 'AUTHORITY_CHECK_TCODE'
+      EXPORTING
+        tcode  = iv_tcode
+      EXCEPTIONS
+        ok     = 1
+        not_ok = 2
+        OTHERS = 3.
+    IF sy-subrc <> 1.
+
+      MOVE c_tcode TO lv_msgv1.
+      RAISE EVENT trigger_msg
+        EXPORTING
+          iv_msgtype = ycl_ppst_tomis_i_prodconf=>c_error
+          iv_id      = ycl_ppst_tomis_i_prodconf=>c_message_cl
+          iv_number  = c_num_044
+          iv_msgv1   = lv_msgv1.
+    ENDIF.
+  ENDMETHOD.
+  METHOD screen_calling.
+    CALL SCREEN 9000.
+  ENDMETHOD.
+**BOC for CL#2
+  METHOD select_data.
+
+    DATA:ls_ds_tom1 TYPE yppst_r1_tomis_header,
+         lv_msgtext TYPE sta_text.
+
+    IF gt_ds_tom1[] IS INITIAL.
+      CLEAR:gt_ds_tom1[],ls_ds_tom1.
+      SELECT * FROM yppstcds_ds_tomis_err
+          INTO TABLE @gt_ds_tom
+          UP TO @me->gt_row ROWS
+        WHERE y_bestandstag IN @me->gt_date
+*          AND y_conf_flag   IN @gt_conf_flag
+          AND y_id_meldung IN @me->gt_id_meldung
+          AND y_sap_conf_table IN @me->gt_sap_conf_table
+          AND y_process_flag IN @gt_process_flag
+          AND y_erz_ereigniszeitpunkt IN @me->gt_date_time
+          AND y_erz_aggregat_mts  IN @me->gt_pss_id
+          AND y_erz_tks_ident IN @me->gt_pss_id
+          AND y_fls_ident  IN @me->gt_fls_ident
+          AND y_fls_standort IN @me->gt_fls_loc
+          AND y_erz_auftragsnummer_1 IN @me->gt_fapo
+          AND y_erz_auftragsposition_1 IN @me->gt_fapo_item
+          AND y_chargen_nr IN @me->gt_heat_no
+          AND y_terminated IN @me->gt_ter.
+      IF sy-subrc IS INITIAL.
+        SORT gt_ds_tom BY y_bestandstag.
+**get the flag
+        gv_sucess1 = gv_sucess.
+        gv_error1 = gv_error.
+        gv_not_process1 = gv_not_process.
+**BOC for CL#4
+        SELECT *
+         FROM yppst_r1_errlog
+         INTO TABLE @gt_errlog
+         FOR ALL ENTRIES IN @gt_ds_tom
+          WHERE y_id_meldung EQ @gt_ds_tom-y_id_meldung.
+        IF sy-subrc IS INITIAL.
+
+        ENDIF.
+**EOC for CL#4
+**Creating the tree node
+        CALL METHOD get_tree_data.
+      ELSE.
+        MESSAGE e001(yppst) INTO lv_msgtext.
+        CALL FUNCTION 'POPUP_TO_INFORM'
+          EXPORTING
+            titel = TEXT-019
+            txt1  = lv_msgtext
+            txt2  = abap_false.
+      ENDIF.
+    ENDIF.
+
+
+  ENDMETHOD.
+**EOC for CL#2
+  METHOD get_tree_data.
+    DATA: lv_tomis     TYPE lvc_nkey,
+          lv_date_key  TYPE lvc_nkey,
+          lv_flag_key  TYPE lvc_nkey,
+          lv_last_key  TYPE lvc_nkey,
+          lv_pflag     TYPE yppst_r1_process_flag,
+          lv_date      TYPE yppst_r1_bestandstag,
+          ls_ds_tom1   TYPE yppst_r1_tomis_header,
+          lv_msgtext   TYPE sta_text,
+          lv_sap_table TYPE  yppst_r1_sap_conf_table,
+          lv_tablename TYPE lvc_nkey,
+          lt_ds_tom    TYPE STANDARD TABLE OF yppstcds_ds_tomis_err.
+
+    CLEAR: lv_date_key,lv_flag_key,lv_last_key,lv_date,lv_pflag,
+           lv_sap_table,lv_tablename,ls_ds_tom1,gt_conf_table[],
+           gt_ds_tom_empty[],ls_ds_tom1,gt_ds_tom1[].
+
+    IF iv_flag EQ abap_true.
+      CLEAR:gt_ds_tom1[],ls_ds_tom1.
+      SELECT * FROM yppstcds_ds_tomis_err
+          INTO TABLE @lt_ds_tom
+        FOR ALL ENTRIES IN @gt_ds_tom
+        WHERE y_id_meldung EQ @gt_ds_tom-y_id_meldung.
+      IF sy-subrc IS INITIAL.
+        CLEAR:gt_ds_tom[].
+        SORT lt_ds_tom BY y_bestandstag.
+        gt_ds_tom[] = lt_ds_tom[].
+      ENDIF.
+    ENDIF.
+* To get the final flag
+    LOOP AT gt_ds_tom ASSIGNING FIELD-SYMBOL(<ls_tom>).
+
+      MOVE-CORRESPONDING <ls_tom> TO ls_ds_tom1.    "##ENH_OK.
+      IF <ls_tom>-y_terminated IS INITIAL.
+*  Case Process Flag is Y and Conf Flag Y
+        IF <ls_tom>-y_process_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y
+          AND <ls_tom>-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+          ls_ds_tom1-y_final_flag = ycl_ppst_tomis_i_prodconf=>c_process_y.
+        ENDIF.
+
+*  Case Process Flag is Y and Conf Flag blank
+        IF <ls_tom>-y_process_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y
+          AND <ls_tom>-y_conf_flag EQ abap_false.
+          ls_ds_tom1-y_final_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+        ENDIF.
+
+*  Case Process Flag is Not eq blank and Conf Flag E
+        IF <ls_tom>-y_process_flag NE abap_false
+          AND <ls_tom>-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+          ls_ds_tom1-y_final_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+        ENDIF.
+
+**  Case Process Flag is Y and Conf Flag blank
+        IF <ls_tom>-y_process_flag EQ ycl_ppst_tomis_i_prodconf=>c_error
+          AND ( <ls_tom>-y_conf_flag NE abap_false OR <ls_tom>-y_conf_flag EQ abap_false ).
+          ls_ds_tom1-y_final_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+        ENDIF.
+*
+**  Case Process Flag is blank and Conf Flag is error
+        IF <ls_tom>-y_process_flag EQ abap_false
+          AND <ls_tom>-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+          ls_ds_tom1-y_final_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+        ENDIF.
+
+*  Case Process Flag is error and Conf Flag blank
+        IF <ls_tom>-y_process_flag EQ abap_false
+          AND <ls_tom>-y_conf_flag EQ abap_false.
+          ls_ds_tom1-y_final_flag = abap_false.
+        ENDIF.
+      ELSE.
+        ls_ds_tom1-y_final_flag = ycl_ppst_tomis_i_prodconf=>c_process_y.
+      ENDIF.
+      APPEND ls_ds_tom1 TO gt_ds_tom1.
+      CLEAR  ls_ds_tom1.
+    ENDLOOP.
+    UNASSIGN <ls_tom>.
+
+* deleting the records based on the error flag
+    SORT gt_ds_tom1 ASCENDING BY y_bestandstag y_final_flag.
+    IF gv_sucess1 IS INITIAL OR gv_error1 IS INITIAL OR gv_not_process1 IS INITIAL.
+      IF gv_sucess1 IS NOT INITIAL AND ( gv_error1 IS INITIAL AND gv_not_process1 IS INITIAL ) .
+        DELETE gt_ds_tom1 WHERE y_final_flag NE ycl_ppst_tomis_i_prodconf=>c_process_y.
+      ELSEIF gv_error1 IS NOT INITIAL AND ( gv_sucess1 IS INITIAL AND gv_not_process1 IS INITIAL ) .
+        DELETE gt_ds_tom1 WHERE y_final_flag NE ycl_ppst_tomis_i_prodconf=>c_error.
+      ELSEIF gv_not_process1 IS NOT INITIAL AND ( gv_error1 IS INITIAL AND gv_sucess1 IS INITIAL ) .
+        DELETE gt_ds_tom1 WHERE y_final_flag NE abap_false.
+      ELSEIF ( gv_sucess1 IS NOT INITIAL AND gv_error1 IS NOT INITIAL  ) AND  gv_not_process1 IS INITIAL.
+        DELETE gt_ds_tom1 WHERE y_final_flag EQ abap_false.
+      ELSEIF  ( gv_sucess1 IS NOT INITIAL AND gv_not_process1 IS NOT INITIAL  ) AND  gv_error1 IS INITIAL.
+        DELETE gt_ds_tom1 WHERE y_final_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+      ELSEIF ( gv_error1 IS NOT INITIAL AND gv_not_process1 IS NOT INITIAL  ) AND  gv_sucess1 IS INITIAL.
+        DELETE gt_ds_tom1 WHERE y_final_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+      ENDIF.
+    ENDIF.
+
+* creating the nodes
+    LOOP AT gt_ds_tom1 INTO ls_ds_tom1.
+
+      IF sy-tabix EQ 1.
+
+        IF ls_ds_tom1-y_final_flag IS INITIAL.
+          lv_pflag = abap_true.
+        ENDIF.
+
+        CALL METHOD add_bestandstag_main
+          EXPORTING
+            is_ds_tom    = ls_ds_tom1
+            iv_space_key = ' '
+          CHANGING
+            xv_node_key  = lv_tomis.
+
+
+        lv_date = ls_ds_tom1-y_bestandstag.
+
+        CALL METHOD add_bestandstag_line
+          EXPORTING
+            is_ds_tom    = ls_ds_tom1
+            iv_space_key = lv_tomis
+          CHANGING
+            xv_node_key  = lv_date_key.
+
+        lv_pflag = ls_ds_tom1-y_final_flag.
+
+        CALL METHOD add_process_flag_line
+          EXPORTING
+            is_ds_tom   = ls_ds_tom1
+            iv_date_key = lv_date_key
+          CHANGING
+            xv_node_key = lv_flag_key.
+**BOC for CL#2
+**Node to add the SAP CONF Table Name
+        lv_sap_table = ls_ds_tom1-y_sap_conf_table.
+
+        CALL METHOD add_table_name
+          EXPORTING
+            is_ds_tom        = ls_ds_tom1
+            iv_flag_key      = lv_flag_key
+            iv_sap_tablename = ls_ds_tom1-y_sap_conf_table
+            iv_tabix         = sy-tabix
+          CHANGING
+            xv_node_key      = lv_tablename.
+**EOC for CL#2
+      ELSE.
+        IF  ls_ds_tom1-y_bestandstag NE lv_date.
+
+          lv_date = ls_ds_tom1-y_bestandstag.
+
+          CALL METHOD add_bestandstag_line
+            EXPORTING
+              is_ds_tom    = ls_ds_tom1
+              iv_space_key = lv_tomis
+            CHANGING
+              xv_node_key  = lv_date_key.
+
+          lv_pflag = ls_ds_tom1-y_final_flag.
+
+          CALL METHOD add_process_flag_line
+            EXPORTING
+              is_ds_tom   = ls_ds_tom1
+              iv_date_key = lv_date_key
+            CHANGING
+              xv_node_key = lv_flag_key.
+***BOC for CL#2
+***Node to add the SAP CONF Table Name
+          lv_sap_table = ls_ds_tom1-y_sap_conf_table.
+
+          CALL METHOD add_table_name
+            EXPORTING
+              is_ds_tom        = ls_ds_tom1
+              iv_flag_key      = lv_flag_key
+              iv_sap_tablename = ls_ds_tom1-y_sap_conf_table
+            CHANGING
+              xv_node_key      = lv_tablename.
+****EOC for CL#2
+        ELSE.
+          IF  ls_ds_tom1-y_final_flag NE lv_pflag .
+            lv_pflag = ls_ds_tom1-y_final_flag.
+
+            CALL METHOD add_process_flag_line
+              EXPORTING
+                is_ds_tom   = ls_ds_tom1
+                iv_date_key = lv_date_key
+              CHANGING
+                xv_node_key = lv_flag_key.
+
+***BOC for CL#2
+***Node to add the SAP CONF Table Name
+            lv_sap_table = ls_ds_tom1-y_sap_conf_table.
+
+            CALL METHOD add_table_name
+              EXPORTING
+                is_ds_tom        = ls_ds_tom1
+                iv_flag_key      = lv_flag_key
+                iv_sap_tablename = ls_ds_tom1-y_sap_conf_table
+              CHANGING
+                xv_node_key      = lv_tablename.
+
+          ELSEIF lv_sap_table NE ls_ds_tom1-y_sap_conf_table.
+
+**Node to add the SAP CONF Table Name
+            lv_sap_table = ls_ds_tom1-y_sap_conf_table.
+
+            CALL METHOD add_table_name
+              EXPORTING
+                is_ds_tom        = ls_ds_tom1
+                iv_flag_key      = lv_flag_key
+                iv_sap_tablename = ls_ds_tom1-y_sap_conf_table
+              CHANGING
+                xv_node_key      = lv_tablename.
+*
+***EOC for CL#2
+          ENDIF.
+        ENDIF.
+      ENDIF.
+
+**BOC for CL#2
+*      CALL METHOD add_complete_line
+*        EXPORTING
+*          is_ds_tom   = ls_ds_tom1
+*          iv_flag_key = lv_flag_key
+*        CHANGING
+*          xv_node_key = lv_last_key.
+**EOC for CL#2
+      CLEAR:ls_ds_tom1.
+    ENDLOOP.
+
+
+    CLEAR:gt_conf_table[].
+  ENDMETHOD.
+  METHOD add_bestandstag_main.
+
+    DATA: lv_node_text   TYPE lvc_value,
+          ls_node        TYPE lvc_s_layn,
+          lt_item_layout TYPE lvc_t_layi,
+          ls_item_layout TYPE lvc_s_layi,
+          lt_tom_date    TYPE STANDARD TABLE OF yppst_r1_tomis_header,
+          lv_line_date   TYPE i,
+          lv_line        TYPE char6,
+          lv_string_date TYPE string.
+
+    lt_tom_date[] = gt_ds_tom1[].
+    DESCRIBE TABLE lt_tom_date LINES lv_line_date.
+* set item-layout
+    ls_item_layout-t_image = c_3p.
+    ls_item_layout-fieldname = go_tree->c_hierarchy_column_name.
+    ls_item_layout-style = cl_gui_column_tree=>style_intensifd_critical.
+    APPEND ls_item_layout TO lt_item_layout.
+
+* add node
+    lv_line = lv_line_date.
+    CONDENSE lv_line.
+
+    CONCATENATE TEXT-008 c_open lv_line c_close INTO lv_string_date SEPARATED BY space.
+    lv_node_text =  lv_string_date.
+    ls_node-n_image   = space.
+    ls_node-exp_image = space.
+
+    CALL METHOD go_tree->add_node
+      EXPORTING
+        i_relat_node_key = iv_space_key
+        i_relationship   = cl_gui_column_tree=>relat_last_child
+        i_node_text      = lv_node_text
+        is_outtab_line   = is_ds_tom
+        is_node_layout   = ls_node
+        it_item_layout   = lt_item_layout
+      IMPORTING
+        e_new_node_key   = xv_node_key.
+  ENDMETHOD.
+  METHOD add_bestandstag_line.
+
+    DATA: lv_node_text   TYPE lvc_value,
+          ls_node        TYPE lvc_s_layn,
+          lt_item_layout TYPE lvc_t_layi,
+          ls_item_layout TYPE lvc_s_layi,
+          lt_tom_date    TYPE STANDARD TABLE OF yppst_r1_tomis_header,
+          lv_line_date   TYPE i,
+          lv_line        TYPE char6,
+          lv_date        TYPE char10,
+          lv_string_date TYPE string.
+
+    lt_tom_date[] = gt_ds_tom1[].
+    DELETE lt_tom_date WHERE y_bestandstag NE is_ds_tom-y_bestandstag.
+    DESCRIBE TABLE lt_tom_date LINES lv_line_date.
+* set item-layout
+    ls_item_layout-t_image = c_3y.
+    ls_item_layout-fieldname = go_tree->c_hierarchy_column_name.
+    ls_item_layout-style = cl_gui_column_tree=>style_intensifd_critical.
+    APPEND ls_item_layout TO lt_item_layout.
+
+* add node
+    lv_line = lv_line_date.
+    CONDENSE lv_line.
+
+    CALL FUNCTION 'CONVERT_DATE_TO_EXTERNAL'
+      EXPORTING
+        date_internal            = is_ds_tom-y_bestandstag
+      IMPORTING
+        date_external            = lv_date
+      EXCEPTIONS
+        date_internal_is_invalid = 1
+        OTHERS                   = 2.
+    IF sy-subrc IS INITIAL.
+
+      CONCATENATE lv_date c_open lv_line c_close INTO lv_string_date SEPARATED BY space.
+
+    ENDIF.
+
+    lv_node_text =  lv_string_date.
+    ls_node-n_image   = space.
+    ls_node-exp_image = space.
+
+    CALL METHOD go_tree->add_node
+      EXPORTING
+        i_relat_node_key = iv_space_key
+        i_relationship   = cl_gui_column_tree=>relat_last_child
+        i_node_text      = lv_node_text
+        is_outtab_line   = is_ds_tom
+        is_node_layout   = ls_node
+        it_item_layout   = lt_item_layout
+      IMPORTING
+        e_new_node_key   = xv_node_key.
+  ENDMETHOD.
+  METHOD add_process_flag_line.
+
+    DATA: lv_node_text   TYPE lvc_value,
+          lt_item_layout TYPE lvc_t_layi,
+          ls_item_layout TYPE lvc_s_layi,
+          lv_relat       TYPE int4,
+          lv_line_flag   TYPE i,
+          lv_line        TYPE char6,
+          lv_string_flag TYPE string,
+          lt_tom_date    TYPE STANDARD TABLE OF yppst_r1_tomis_header.
+
+    CLEAR: lv_node_text,lt_item_layout,ls_item_layout,
+           lv_relat,lv_line_flag,lv_line,lv_string_flag,lt_tom_date.
+* set item-layout
+    ls_item_layout-t_image   = c_3y.
+    ls_item_layout-style     = cl_gui_column_tree=>style_intensified.
+    ls_item_layout-fieldname = go_tree->c_hierarchy_column_name.
+    APPEND ls_item_layout TO lt_item_layout.
+
+* add node
+*    IF is_ds_tom-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+    IF is_ds_tom-y_final_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+* When Conf flag is Y
+      lt_tom_date[] = gt_ds_tom1[].
+      DELETE lt_tom_date WHERE y_bestandstag NE is_ds_tom-y_bestandstag.
+      DELETE lt_tom_date WHERE y_final_flag  NE ycl_ppst_tomis_i_prodconf=>c_process_y.
+
+      DESCRIBE TABLE lt_tom_date LINES lv_line_flag.
+      lv_line = lv_line_flag.
+      CONDENSE lv_line.
+      CONCATENATE TEXT-005 c_open lv_line c_close INTO lv_string_flag SEPARATED BY space.
+      lv_node_text = lv_string_flag.
+
+    ELSEIF is_ds_tom-y_final_flag EQ ycl_ppst_tomis_i_prodconf=>c_error .
+* When Conf Flag is in error
+      lt_tom_date[] = gt_ds_tom1[].
+      DELETE lt_tom_date WHERE y_bestandstag NE is_ds_tom-y_bestandstag.
+      DELETE lt_tom_date WHERE y_final_flag  NE ycl_ppst_tomis_i_prodconf=>c_error.
+
+      DESCRIBE TABLE lt_tom_date LINES lv_line_flag.
+      lv_line = lv_line_flag.
+      CONDENSE lv_line.
+      CONCATENATE TEXT-006 c_open lv_line c_close INTO lv_string_flag SEPARATED BY space.
+      lv_node_text = lv_string_flag.
+
+    ELSEIF is_ds_tom-y_final_flag EQ abap_false.
+* When Conf Flag is Blank
+      lt_tom_date[] = gt_ds_tom1[].
+      DELETE lt_tom_date WHERE y_bestandstag NE is_ds_tom-y_bestandstag.
+      DELETE lt_tom_date WHERE y_final_flag  NE abap_false.
+
+      DESCRIBE TABLE lt_tom_date LINES lv_line_flag.
+      lv_line = lv_line_flag.
+      CONDENSE lv_line.
+      CONCATENATE TEXT-007 c_open lv_line c_close INTO lv_string_flag SEPARATED BY space.
+      lv_node_text = lv_string_flag.
+
+    ENDIF.
+
+    lv_relat = cl_gui_column_tree=>relat_last_child.
+
+
+    CALL METHOD go_tree->add_node
+      EXPORTING
+        i_relat_node_key = iv_date_key
+        i_relationship   = lv_relat
+        i_node_text      = lv_node_text
+        is_outtab_line   = is_ds_tom
+        it_item_layout   = lt_item_layout
+      IMPORTING
+        e_new_node_key   = xv_node_key.
+
+  ENDMETHOD.
+***BOC for CL#2
+  METHOD add_table_name.
+* To ad the table name
+
+    DATA: lv_node_text   TYPE lvc_value,
+          lt_item_layout TYPE lvc_t_layi,
+          ls_item_layout TYPE lvc_s_layi,
+          lv_relat       TYPE int4,
+          lv_line_flag   TYPE i,
+          lv_line        TYPE char5,
+          lv_string_flag TYPE string,
+          lt_tom_date    TYPE STANDARD TABLE OF yppst_r1_tomis_header,
+          lv_tablename   TYPE char30.
+
+    CLEAR: lv_node_text,lt_item_layout,ls_item_layout,
+           lv_relat,lv_line_flag,lv_line,lv_string_flag,lt_tom_date,gs_conf_table,lv_tablename.
+    READ TABLE gt_conf_table ASSIGNING FIELD-SYMBOL(<ls_tom>)
+                  WITH KEY y_date       = is_ds_tom-y_bestandstag
+                           y_conf_table = is_ds_tom-y_sap_conf_table
+                           y_flag       = is_ds_tom-y_final_flag.
+
+    IF sy-subrc IS NOT INITIAL OR iv_tabix EQ c_ans_1.
+
+      gs_conf_table-y_id_meldung = is_ds_tom-y_id_meldung.
+      gs_conf_table-y_date       = is_ds_tom-y_bestandstag.
+      gs_conf_table-y_conf_table = is_ds_tom-y_sap_conf_table.
+      gs_conf_table-y_flag       = is_ds_tom-y_final_flag.
+      APPEND gs_conf_table TO gt_conf_table.
+      CLEAR:gs_conf_table.
+* set item-layout
+      ls_item_layout-t_image   = c_fo.
+      ls_item_layout-style     = cl_gui_column_tree=>style_intensified.
+      ls_item_layout-fieldname = go_tree->c_hierarchy_column_name.
+      APPEND ls_item_layout TO lt_item_layout.
+
+* add node
+      IF is_ds_tom-y_final_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+* When Conf flag is Y
+        lt_tom_date[] = gt_ds_tom1[].
+        DELETE lt_tom_date WHERE y_bestandstag NE is_ds_tom-y_bestandstag.
+        DELETE lt_tom_date WHERE y_final_flag  NE ycl_ppst_tomis_i_prodconf=>c_process_y.
+        DELETE lt_tom_date WHERE y_sap_conf_table NE iv_sap_tablename.
+
+        DESCRIBE TABLE lt_tom_date LINES lv_line_flag.
+        lv_line = lv_line_flag.
+        CONDENSE lv_line.
+        IF iv_sap_tablename IS INITIAL.
+          lv_tablename = TEXT-022.
+        ELSE.
+          lv_tablename = iv_sap_tablename.
+        ENDIF.
+        CONCATENATE lv_tablename c_open lv_line c_close INTO lv_string_flag SEPARATED BY space.
+        lv_node_text = lv_string_flag.
+
+      ELSEIF is_ds_tom-y_final_flag EQ ycl_ppst_tomis_i_prodconf=>c_error .
+* When Conf Flag is in error
+        lt_tom_date[] = gt_ds_tom1[].
+        DELETE lt_tom_date WHERE y_bestandstag NE is_ds_tom-y_bestandstag.
+        DELETE lt_tom_date WHERE y_final_flag  NE ycl_ppst_tomis_i_prodconf=>c_error.
+        DELETE lt_tom_date WHERE y_sap_conf_table NE iv_sap_tablename.
+
+        DESCRIBE TABLE lt_tom_date LINES lv_line_flag.
+        lv_line = lv_line_flag.
+        CONDENSE lv_line.
+        IF iv_sap_tablename IS INITIAL.
+          lv_tablename = TEXT-022.
+        ELSE.
+          lv_tablename = iv_sap_tablename.
+        ENDIF.
+        CONCATENATE lv_tablename c_open lv_line c_close INTO lv_string_flag SEPARATED BY space.
+        lv_node_text = lv_string_flag.
+
+
+      ELSEIF is_ds_tom-y_final_flag EQ abap_false.
+* When Conf Flag is Blank
+        lt_tom_date[] = gt_ds_tom1[].
+        DELETE lt_tom_date WHERE y_bestandstag NE is_ds_tom-y_bestandstag.
+        DELETE lt_tom_date WHERE y_final_flag  NE abap_false.
+        DELETE lt_tom_date WHERE y_sap_conf_table NE iv_sap_tablename.
+        DESCRIBE TABLE lt_tom_date LINES lv_line_flag.
+        lv_line = lv_line_flag.
+        CONDENSE lv_line.
+        IF iv_sap_tablename IS INITIAL.
+          lv_tablename = TEXT-022.
+        ELSE.
+          lv_tablename = iv_sap_tablename.
+        ENDIF.
+        CONCATENATE lv_tablename c_open lv_line c_close INTO lv_string_flag SEPARATED BY space.
+        lv_node_text = lv_string_flag.
+
+      ENDIF.
+
+      lv_relat = cl_gui_column_tree=>relat_last_child.
+
+
+      CALL METHOD go_tree->add_node
+        EXPORTING
+          i_relat_node_key = iv_flag_key
+          i_relationship   = lv_relat
+          i_node_text      = lv_node_text
+          is_outtab_line   = is_ds_tom
+          it_item_layout   = lt_item_layout
+        IMPORTING
+          e_new_node_key   = xv_node_key.
+    ENDIF.
+  ENDMETHOD.
+***EOC for CL#2
+**BOC for CL#2
+*  METHOD add_complete_line.
+*
+*    DATA: lv_node_text   TYPE lvc_value,
+*          lt_item_layout TYPE lvc_t_layi,
+*          ls_item_layout TYPE lvc_s_layi,
+*          ls_node        TYPE lvc_s_layn.
+** set item-layout
+*    ls_item_layout-fieldname = go_tree->c_hierarchy_column_name.
+*    ls_item_layout-class = cl_gui_column_tree=>item_class_link.
+*    APPEND ls_item_layout TO lt_item_layout.
+*    CLEAR ls_item_layout.
+*
+**    lv_node_text =  is_ds_tom-y_conf_flag.
+*    lv_node_text =  is_ds_tom-y_final_flag.
+*    ls_node-n_image   = space.
+*    ls_node-exp_image = space.
+*
+*    CALL METHOD go_tree->add_node
+*      EXPORTING
+*        i_relat_node_key = iv_flag_key
+*        i_relationship   = cl_gui_column_tree=>relat_last_child
+*        is_outtab_line   = is_ds_tom
+*        i_node_text      = lv_node_text
+*        is_node_layout   = ls_node
+*        it_item_layout   = lt_item_layout
+*      IMPORTING
+*        e_new_node_key   = xv_node_key.
+*
+*  ENDMETHOD.
+**EOC for CL#2
+  METHOD build_header.
+
+    xs_header-heading = TEXT-008.
+    xs_header-tooltip = TEXT-008.
+    xs_header-width = 30.
+    xs_header-width_pix = ''.
+
+  ENDMETHOD.
+  METHOD build_fieldcatalog.
+
+    DATA: ls_fieldcatalog TYPE lvc_s_fcat.
+* get fieldcatalog
+    CALL FUNCTION 'LVC_FIELDCATALOG_MERGE'
+      EXPORTING
+        i_structure_name = c_yppst_r1_tomis_header
+      CHANGING
+        ct_fieldcat      = gt_fieldcatalog.
+
+    SORT gt_fieldcatalog BY col_pos.
+
+* change fieldcatalog
+    LOOP AT gt_fieldcatalog INTO ls_fieldcatalog.
+      CASE ls_fieldcatalog-fieldname.
+        WHEN c_y_bestandstag.
+          ls_fieldcatalog-no_out = abap_true.
+          ls_fieldcatalog-key    = abap_true.
+          ls_fieldcatalog-hotspot = abap_true.
+          ls_fieldcatalog-tech = abap_false.
+        WHEN c_y_conf_flag.
+          ls_fieldcatalog-no_out = abap_true.
+          ls_fieldcatalog-hotspot = abap_true.
+          ls_fieldcatalog-tech = abap_false.
+        WHEN c_y_id_meldung.
+          ls_fieldcatalog-no_out = abap_false.
+        WHEN OTHERS.
+          ls_fieldcatalog-no_out = abap_true.
+      ENDCASE.
+      MODIFY gt_fieldcatalog FROM ls_fieldcatalog.
+    ENDLOOP.
+
+  ENDMETHOD.
+  METHOD get_alv_structure.
+    DATA: lt_dfies    TYPE STANDARD TABLE OF dfies,
+          ls_comp     TYPE abap_componentdescr,
+          lv_leng     TYPE i,
+          lv_decimals TYPE i,
+          ls_ref      TYPE salv_s_ddic_reference.
+*          ls_table    TYPE  yppst_r1_alvmap.
+
+    SELECT * FROM yppst_r1_ds_alv INTO TABLE @DATA(lt_table).
+    IF sy-subrc EQ 0.
+      SORT lt_table BY y_sequence.
+    ENDIF.
+
+
+    LOOP AT lt_table ASSIGNING FIELD-SYMBOL(<ls_table>).
+      CALL FUNCTION 'DDIF_FIELDINFO_GET'
+        EXPORTING
+          tabname        = <ls_table>-y_tabname
+          fieldname      = <ls_table>-y_fieldname
+        TABLES
+          dfies_tab      = lt_dfies
+        EXCEPTIONS
+          not_found      = 1
+          internal_error = 2
+          OTHERS         = 3.
+      IF sy-subrc EQ 0.
+* Implement suitable error handling here
+        READ TABLE lt_dfies ASSIGNING FIELD-SYMBOL(<ls_dfies>) INDEX 1.
+        IF sy-subrc EQ 0.
+          ls_comp-name = <ls_table>-y_fieldname.
+          CASE <ls_dfies>-inttype.
+            WHEN c_n.
+              lv_leng = <ls_dfies>-leng.
+              ls_comp-type =  cl_abap_elemdescr=>get_n( lv_leng ).
+            WHEN c_d.
+              ls_comp-type = cl_abap_elemdescr=>get_d( ).
+            WHEN c_p.
+              lv_leng = <ls_dfies>-leng.
+              lv_decimals =  <ls_dfies>-decimals.
+              ls_comp-type = cl_abap_elemdescr=>get_p( p_length = lv_leng
+                                                         p_decimals = lv_decimals ).
+            WHEN c_c.
+              lv_leng = <ls_dfies>-leng.
+              ls_comp-type = cl_abap_elemdescr=>get_c(   lv_leng ).
+            WHEN c_t.
+              ls_comp-type = cl_abap_elemdescr=>get_t( ).
+            WHEN c_x.
+              lv_leng = <ls_dfies>-leng.
+              ls_comp-type = cl_abap_elemdescr=>get_x(   lv_leng ).
+            WHEN OTHERS.
+          ENDCASE.
+          APPEND ls_comp TO et_comp.
+          CLEAR: ls_comp.
+          ls_ref-field = <ls_table>-y_fieldname.
+          ls_ref-table = <ls_table>-y_tabname.
+          APPEND ls_ref TO et_ref.
+          CLEAR ls_ref.
+        ENDIF.
+        UNASSIGN <ls_dfies>.
+      ENDIF.
+    ENDLOOP.
+
+  ENDMETHOD.
+  METHOD layout_f4_help.
+* Description        :F4 help in layout.
+    DATA: ls_layout TYPE salv_s_layout_info,
+          ls_key    TYPE salv_s_layout_key.
+
+    ls_key-report = sy-repid.
+
+    ls_layout = cl_salv_layout_service=>f4_layouts(
+                  s_key    = ls_key
+                  restrict = if_salv_c_layout=>restrict_none  ).
+
+    xv_layout = ls_layout-layout.
+  ENDMETHOD.
+ENDCLASS.               "lcl_ds_error
+*&---------------------------------------------------------------------*
+*&       Class (Implementation)  lcl_msg_handling
+*&---------------------------------------------------------------------*
+*        Text
+*----------------------------------------------------------------------*
+CLASS lcl_msg_handling IMPLEMENTATION.
+* Description        : Display messages
+  METHOD display_msg.
+* Display message with message class
+    MESSAGE ID iv_id TYPE iv_msgtype NUMBER iv_number WITH iv_msgv1 iv_msgv2 iv_msgv3 iv_msgv4 .
+* Leave to selection screen
+    LEAVE LIST-PROCESSING.
+  ENDMETHOD.
+ENDCLASS.               "lcl_msg_handling
+*&---------------------------------------------------------------------*
+*&       Class (Implementation)  lcl_tree_event_receiver
+*&---------------------------------------------------------------------*
+*        Text
+*----------------------------------------------------------------------*
+CLASS lcl_tree_event_receiver IMPLEMENTATION.
+
+  METHOD handle_item_double_click.
+* Description        : To handel the double click on NODE
+    DATA : lv_nodekey   TYPE lvc_nkey,
+           ls_tom       TYPE yppst_r1_tomis_header,
+           lv_node_text TYPE char128,
+           lv_flag      TYPE char1,
+           lv_date      TYPE char10,
+           lv_tomisdate TYPE char10,
+           lt_tom_date  TYPE STANDARD TABLE OF yppst_r1_tomis_header.
+
+    CLEAR: lv_nodekey, lv_node_text,lv_tomisdate.
+
+    lv_nodekey = node_key.
+
+    IF lv_nodekey IS NOT INITIAL.
+      CALL METHOD go_tree->get_outtab_line
+        EXPORTING
+          i_node_key    = lv_nodekey
+        IMPORTING
+          e_outtab_line = ls_tom
+          e_node_text   = lv_node_text.
+    ENDIF.
+
+    IF lv_node_text CS TEXT-005.
+      lv_flag = ycl_ppst_tomis_i_prodconf=>c_process_y.
+    ELSEIF lv_node_text CS TEXT-006.
+      lv_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+    ELSEIF lv_node_text CS TEXT-007.
+      lv_flag = abap_false.
+    ELSE.
+      lv_date = lv_node_text+0(10).
+    ENDIF.
+**BOC for CL#2
+    IF lv_date IS NOT INITIAL.
+      CALL FUNCTION 'HRWPC_DATE2EXTERNAL'
+        EXPORTING
+          date_internal = ls_tom-y_bestandstag
+        IMPORTING
+          date_external = lv_tomisdate.
+
+      IF lv_date NE lv_tomisdate.
+        CLEAR: lv_date,lv_flag.
+      ENDIF.
+    ENDIF.
+**EOC for CL#2
+** data from conf table
+**BOC for CL#2
+    IF lv_flag IS INITIAL AND lv_date IS INITIAL AND lv_nodekey NE 1.
+      lt_tom_date[] =  gt_ds_tom1[].
+      DELETE lt_tom_date WHERE y_bestandstag NE ls_tom-y_bestandstag.
+      DELETE lt_tom_date WHERE y_final_flag NE ls_tom-y_final_flag.
+      DELETE lt_tom_date WHERE y_sap_conf_table NE ls_tom-y_sap_conf_table.
+    ELSE.
+*      READ TABLE gt_ds_tom_empty ASSIGNING FIELD-SYMBOL(<ls_ds_tom1>) INDEX lv_nodekey.
+*
+*      IF sy-subrc IS INITIAL.
+
+      lt_tom_date[] =  gt_ds_tom1[].
+
+      IF lv_nodekey NE 1.
+*          DELETE lt_tom_date WHERE y_bestandstag NE <ls_ds_tom1>-y_bestandstag.
+        DELETE lt_tom_date WHERE y_bestandstag NE ls_tom-y_bestandstag.
+        IF lv_date IS INITIAL.
+          DELETE lt_tom_date WHERE y_final_flag  NE lv_flag.
+        ENDIF.
+      ENDIF.
+*      ENDIF.
+**BOC for CL#2
+    ENDIF.
+**EOC for CL#2
+    IF lt_tom_date[] IS NOT INITIAL..
+      select_display_alv( EXPORTING it_tom_header = lt_tom_date ).
+    ENDIF.
+
+  ENDMETHOD.
+  METHOD select_display_alv.
+* Description    : To get the data based on Tomis id fetch from selected nodes
+
+    DATA: lo_new_type TYPE REF TO cl_abap_structdescr,
+          lo_new_tab  TYPE REF TO cl_abap_tabledescr,
+          lo_data     TYPE REF TO data,
+          lo_line     TYPE REF TO data,
+**BOC for CL#3
+          lt_batch    TYPE SORTED TABLE OF yppst_r1_batchup WITH UNIQUE KEY y_id_meldung y_vorgang y_sap_batch_no.
+**BOC for CL#3
+
+    IF it_tom_header[] IS NOT INITIAL.
+*  Selecting the data based on Tomis id fetch from selected nodes
+      SELECT *  FROM  yppst_r1_tomis
+        INTO TABLE @gt_r1_tomis
+        FOR ALL ENTRIES IN @it_tom_header
+        WHERE y_id_meldung = @it_tom_header-y_id_meldung
+          AND y_vorgang    = @it_tom_header-y_vorgang.
+      IF sy-subrc IS INITIAL.
+        SORT gt_r1_tomis BY y_id_meldung.
+      ENDIF.
+    ENDIF.
+
+    CLEAR: gv_user_flag.
+*  If the GT_ALV is not initial this means it run second time
+    IF <gt_alv> IS NOT INITIAL.
+      gv_flag = abap_true.
+      gv_user_flag = iv_user_flag.
+    ENDIF.
+
+    CLEAR: <gt_alv>,gv_user_flag.
+* Assign the field symbol <gt_alv>
+    IF  gt_comp[] IS NOT INITIAL.
+      lo_new_type = cl_abap_structdescr=>create( gt_comp ).
+
+      lo_new_tab = cl_abap_tabledescr=>create(
+                   p_line_type  = lo_new_type
+                   p_table_kind = cl_abap_tabledescr=>tablekind_std
+                   p_unique     = abap_false ).
+
+      CREATE DATA lo_data TYPE HANDLE lo_new_tab.
+*
+* 6. New internal table in the fieldsymbols
+*        ASSIGN lo_data->* TO <gt_alv>.
+      CREATE DATA lo_line LIKE LINE OF <gt_alv>.
+      ASSIGN lo_line->* TO <gs_alv>.
+      IF <gs_alv> IS NOT ASSIGNED.
+
+        CREATE DATA lo_line LIKE LINE OF <gt_alv>.
+        ASSIGN lo_line->* TO <gs_alv>.
+      ENDIF.
+    ENDIF.
+
+    CLEAR: gv_tabix.
+    LOOP AT gt_r1_tomis ASSIGNING FIELD-SYMBOL(<ls_tomis>).
+      gv_tabix = sy-tabix.
+**  information for  alv display
+      IF ( <ls_tomis>-y_process_flag NE ycl_ppst_tomis_i_prodconf=>c_process_y
+          OR <ls_tomis>-y_terminated EQ abap_true ).
+        fill_alv( EXPORTING is_tomis = <ls_tomis> ).
+      ENDIF.
+
+      IF ( <ls_tomis>-y_process_flag = ycl_ppst_tomis_i_prodconf=>c_process_y
+          AND <ls_tomis>-y_terminated EQ abap_false ).
+
+        CASE <ls_tomis>-y_sap_conf_table.
+          WHEN c_yppst_r1_conf1.
+            SELECT SINGLE *  FROM  yppst_r1_conf1                   "CI_SEL_NESTED
+              INTO @DATA(ls_yppst_r1_conf1)
+              WHERE werks  IN @gt_werks
+                AND y_id_meldung = @<ls_tomis>-y_id_meldung
+                AND y_vorgang = @<ls_tomis>-y_vorgang.
+            IF sy-subrc IS INITIAL.
+              fill_alv_conf1( EXPORTING is_conf1 = ls_yppst_r1_conf1
+                                        is_tomis = <ls_tomis> ).
+*            ELSE.
+*              fill_alv( EXPORTING is_tomis = <ls_tomis> ).
+            ENDIF.
+
+
+          WHEN c_yppst_r1_conf2.
+            SELECT SINGLE *  FROM  yppst_r1_conf2                   "CI_SEL_NESTED
+                    INTO @DATA(ls_yppst_r1_conf2)
+              WHERE werks   IN @gt_werks
+                AND y_id_meldung = @<ls_tomis>-y_id_meldung
+                AND y_vorgang = @<ls_tomis>-y_vorgang.
+            IF sy-subrc IS INITIAL.
+              fill_alv_conf2( EXPORTING is_conf2 = ls_yppst_r1_conf2
+                                        is_tomis = <ls_tomis> ).
+*            ELSE.
+*              fill_alv( EXPORTING is_tomis = <ls_tomis> ).
+            ENDIF.
+
+
+          WHEN c_yppst_r1_conf3.
+            SELECT SINGLE *  FROM  yppst_r1_conf3                  "CI_SEL_NESTED
+                    INTO @DATA(ls_yppst_r1_conf3)
+              WHERE werks   IN @gt_werks
+                AND y_id_meldung = @<ls_tomis>-y_id_meldung
+                AND y_vorgang = @<ls_tomis>-y_vorgang.
+            IF sy-subrc IS INITIAL.
+              fill_alv_conf3( EXPORTING is_conf3 = ls_yppst_r1_conf3
+                                        is_tomis = <ls_tomis> ).
+*            ELSE.
+*              fill_alv( EXPORTING is_tomis = <ls_tomis> ).
+            ENDIF.
+
+
+          WHEN c_yppst_r1_conf4.
+            SELECT SINGLE *  FROM  yppst_r1_conf4                 "CI_SEL_NESTED
+                    INTO @DATA(ls_yppst_r1_conf4)
+              WHERE werks   IN @gt_werks
+                AND y_id_meldung = @<ls_tomis>-y_id_meldung
+                AND y_vorgang = @<ls_tomis>-y_vorgang.
+            IF sy-subrc IS INITIAL.
+              fill_alv_conf4( EXPORTING is_conf4 = ls_yppst_r1_conf4
+                                        is_tomis = <ls_tomis> ).
+*            ELSE.
+*              fill_alv( EXPORTING is_tomis = <ls_tomis> ).
+            ENDIF.
+
+
+          WHEN c_yppst_r1_purslab.
+            SELECT SINGLE *  FROM  yppst_r1_purslab               "CI_SEL_NESTED
+                    INTO @DATA(ls_yppst_r1_purslab)
+              WHERE werks   IN @gt_werks
+                AND y_id_meldung = @<ls_tomis>-y_id_meldung
+                AND y_vorgang = @<ls_tomis>-y_vorgang.
+            IF sy-subrc IS INITIAL.
+              fill_alv_slab( EXPORTING is_slab = ls_yppst_r1_purslab
+                                        is_tomis = <ls_tomis> ).
+*            ELSE.
+*              fill_alv( EXPORTING is_tomis = <ls_tomis> ).
+            ENDIF.
+
+          WHEN c_yppst_r1_batchup.
+            SELECT *  FROM  yppst_r1_batchup               "CI_SEL_NESTED
+                 INTO TABLE @lt_batch
+              WHERE y_id_meldung = @<ls_tomis>-y_id_meldung
+                AND y_vorgang = @<ls_tomis>-y_vorgang.
+            IF sy-subrc IS INITIAL.
+              LOOP AT lt_batch ASSIGNING FIELD-SYMBOL(<ls_batchup>).
+                fill_alv_batch( EXPORTING is_batch = <ls_batchup>
+                                          is_tomis = <ls_tomis> ).
+              ENDLOOP.
+
+            ENDIF.
+**BOC for CL#3
+          WHEN c_yppst_r1_confz.
+            SELECT SINGLE *  FROM  yppst_r1_confz               "CI_SEL_NESTED
+                 INTO @DATA(ls_yppst_r1_confz)
+              WHERE y_id_meldung = @<ls_tomis>-y_id_meldung
+                AND y_vorgang = @<ls_tomis>-y_vorgang.
+            IF sy-subrc IS INITIAL.
+              fill_alv_confz( EXPORTING is_confz = ls_yppst_r1_confz
+                                        is_tomis = <ls_tomis> ).
+*            ELSE.
+*              fill_alv( EXPORTING is_tomis = <ls_tomis> ).
+            ENDIF.
+**EOC for CL#3
+          WHEN OTHERS.
+        ENDCASE.
+
+      ENDIF.
+      CLEAR: gv_tabix,<gs_alv>.
+    ENDLOOP.
+
+    IF go_graphic_parent2 IS BOUND.
+
+      IF gv_flag EQ abap_true.
+**BOC for CL#4
+        IF iv_user_flag EQ abap_true.
+          CALL METHOD refresh.
+        ENDIF.
+**EOC for CL#4
+        go_grid_right->refresh( ).
+
+      ELSE.
+        display_alv( EXPORTING it_ref     = gt_ref
+                     CHANGING xt_table = <gt_alv> ).
+        cl_gui_cfw=>flush( ).
+      ENDIF.
+    ENDIF.
+
+  ENDMETHOD.
+**BOC for CL#2
+  METHOD refresh.
+**Refresh node
+*    DATA: lv_nodekey        TYPE lvc_nkey.
+*
+*    CLEAR: lv_nodekey.
+*    lv_nodekey = 1.
+*    CONDENSE lv_nodekey.
+****Delete all Nodes from Tree
+    CALL METHOD go_tree->delete_all_nodes.
+*    TRY.
+*        CALL METHOD go_tree->get_top_node
+*          IMPORTING
+*            e_node_key = lv_nodekey
+*          EXCEPTIONS
+*            OTHERS     = 1.
+
+*        IF NOT lv_nodekey IS INITIAL.
+*          CALL METHOD go_tree->delete_subtree
+*            EXPORTING
+*              i_node_key = lv_nodekey.
+*        ENDIF.
+
+*    ENDTRY.
+
+*...Create hierarchy (nodes and leaves)
+*
+    CALL METHOD lcl_ds_error=>get_tree_data( EXPORTING iv_flag = abap_true ).
+
+**...Send data to frontend.
+    CALL METHOD go_tree->frontend_update.
+*
+    CALL METHOD cl_gui_cfw=>flush( ).
+
+  ENDMETHOD.
+**EOC for CL#2
+  METHOD fill_alv .
+* Description    : To fill the alv structure
+    FIELD-SYMBOLS <lv_field> TYPE any.
+    IF is_tomis IS NOT INITIAL.
+      IF is_tomis-y_terminated IS INITIAL.
+*        READ TABLE <gt_alv> ASSIGNING <gs_alv> WITH KEY (ycl_ppst_tomis_i_prodconf=>c_meldung) = is_tomis-y_id_meldung
+*                                                        (ycl_ppst_tomis_i_prodconf=>c_vorgang) = is_tomis-y_vorgang.
+*        IF sy-subrc IS INITIAL AND <gs_alv> IS ASSIGNED.
+        IF is_tomis-y_process_flag IS INITIAL.
+          IF <gs_alv> IS ASSIGNED.
+            MOVE-CORRESPONDING is_tomis TO <gs_alv>.
+          ENDIF.
+          ASSIGN COMPONENT c_y_so2_lastrec OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL AND <lv_field> IS ASSIGNED.
+            <lv_field> = c_yellow.
+          ENDIF.
+        ELSE.
+          IF <gs_alv> IS ASSIGNED.
+            MOVE-CORRESPONDING is_tomis TO <gs_alv>.
+          ENDIF.
+          ASSIGN COMPONENT c_y_so2_lastrec OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL AND <lv_field> IS ASSIGNED.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+          ENDIF.
+        ENDIF.
+*        ELSE.
+*          IF is_tomis-y_process_flag IS INITIAL.
+*            IF <gs_alv> IS ASSIGNED.
+*              MOVE-CORRESPONDING is_tomis TO <gs_alv>.
+*            ENDIF.
+*            ASSIGN COMPONENT c_y_so2_lastrec OF STRUCTURE <gs_alv> TO <lv_field>.
+*            IF sy-subrc EQ 0.
+*              <lv_field> = c_yellow.
+*            ENDIF.
+*
+*          ELSE.
+*            IF <gs_alv> IS ASSIGNED.
+*              MOVE-CORRESPONDING is_tomis TO <gs_alv>.
+*            ENDIF.
+*            ASSIGN COMPONENT c_y_so2_lastrec OF STRUCTURE <gs_alv> TO <lv_field>.
+*            IF sy-subrc EQ 0.
+*              <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+*            ENDIF.
+*          ENDIF.
+*        ENDIF.
+
+      ELSE.
+*        READ TABLE <gt_alv> ASSIGNING <gs_alv> WITH KEY (ycl_ppst_tomis_i_prodconf=>c_meldung) = is_tomis-y_id_meldung
+*                                                        (ycl_ppst_tomis_i_prodconf=>c_vorgang) = is_tomis-y_vorgang.
+*        IF sy-subrc IS INITIAL AND <gs_alv> IS ASSIGNED.
+        IF is_tomis-y_terminated IS NOT INITIAL.
+          IF <gs_alv> IS ASSIGNED.
+            MOVE-CORRESPONDING is_tomis TO <gs_alv>.
+          ENDIF.
+          ASSIGN COMPONENT c_y_so2_lastrec OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL AND <lv_field> IS ASSIGNED.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+          ENDIF.
+        ENDIF.
+*        ELSE.
+*          IF <gs_alv> IS ASSIGNED.
+*            MOVE-CORRESPONDING is_tomis TO <gs_alv>.
+*          ENDIF.
+*          ASSIGN COMPONENT c_y_so2_lastrec OF STRUCTURE <gs_alv> TO <lv_field>.
+*          IF sy-subrc IS INITIAL AND <lv_field> IS ASSIGNED.
+*            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+*          ENDIF.
+*        ENDIF.
+      ENDIF.
+
+      IF gv_user_flag EQ abap_true.
+        MODIFY <gt_alv> FROM <gs_alv> INDEX gv_tabix.
+      ELSE.
+        APPEND <gs_alv> TO <gt_alv>.
+      ENDIF.
+
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD fill_alv_conf1 .
+* Description    : To fill the alv structure
+    FIELD-SYMBOLS <lv_field> TYPE any.
+
+    IF is_tomis IS NOT INITIAL AND <gs_alv> IS ASSIGNED.
+      MOVE-CORRESPONDING is_tomis TO <gs_alv>.
+    ENDIF.
+
+    IF is_conf1 IS NOT INITIAL.
+*      READ TABLE <gt_alv> ASSIGNING <gs_alv> WITH KEY (ycl_ppst_tomis_i_prodconf=>c_meldung) = is_conf1-y_id_meldung
+*                                                  (ycl_ppst_tomis_i_prodconf=>c_vorgang) = is_conf1-y_vorgang.
+*      IF sy-subrc IS INITIAL AND <gs_alv> IS ASSIGNED..
+*        MOVE-CORRESPONDING is_conf1 TO <gs_alv>.
+*        ASSIGN COMPONENT c_y_so2_lastrec OF STRUCTURE <gs_alv> TO <lv_field>.
+*        IF sy-subrc IS INITIAL AND <lv_field> IS ASSIGNED.
+*          IF is_tomis-y_terminated IS INITIAL.
+*            IF is_conf1-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+*              <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+*            ELSEIF is_conf1-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+*              <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+*            ELSEIF is_conf1-y_conf_flag EQ abap_false AND is_tomis-y_process_flag NE abap_false.
+*              <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+*            ELSEIF is_conf1-y_conf_flag EQ abap_false AND is_tomis-y_process_flag EQ abap_false.
+*              <lv_field> = c_yellow.
+*            ENDIF.
+*          ELSE.
+*            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+*          ENDIF.
+*        ENDIF.
+*      ELSE.
+      READ TABLE gt_r1_tomis ASSIGNING FIELD-SYMBOL(<ls_tomis>) WITH KEY y_id_meldung = is_conf1-y_id_meldung
+                                                                      y_vorgang   =  is_conf1-y_vorgang.
+      IF sy-subrc IS INITIAL AND <ls_tomis> IS ASSIGNED AND <gs_alv> IS ASSIGNED.
+        MOVE-CORRESPONDING <ls_tomis> TO <gs_alv>.
+      ENDIF.
+      IF  <gs_alv> IS ASSIGNED..
+        MOVE-CORRESPONDING is_conf1 TO <gs_alv>.
+      ENDIF.
+      ASSIGN COMPONENT c_y_so2_lastrec OF STRUCTURE <gs_alv> TO <lv_field>.
+      IF sy-subrc IS INITIAL AND <lv_field> IS ASSIGNED.
+        IF is_tomis-y_terminated IS INITIAL.
+          IF is_conf1-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+          ELSEIF is_conf1-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+          ELSEIF is_conf1-y_conf_flag EQ abap_false AND is_tomis-y_process_flag NE abap_false.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+          ELSEIF is_conf1-y_conf_flag EQ abap_false AND is_tomis-y_process_flag EQ abap_false.
+            <lv_field> = c_yellow.
+          ENDIF.
+        ELSE.
+          <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+        ENDIF.
+      ENDIF.
+*      ENDIF.
+
+      IF gv_user_flag EQ abap_true.
+        MODIFY <gt_alv> FROM <gs_alv> INDEX gv_tabix.
+      ELSE.
+        APPEND <gs_alv> TO <gt_alv>.
+      ENDIF.
+
+    ENDIF.
+
+  ENDMETHOD.
+  METHOD fill_alv_conf2 .
+* Description    : To fill the alv structure
+    FIELD-SYMBOLS <lv_field> TYPE any.
+
+    IF is_tomis IS NOT INITIAL AND <gs_alv> IS ASSIGNED.
+      MOVE-CORRESPONDING is_tomis TO <gs_alv>.
+    ENDIF.
+
+    IF is_conf2 IS NOT INITIAL.
+*      READ TABLE <gt_alv> ASSIGNING <gs_alv> WITH KEY (ycl_ppst_tomis_i_prodconf=>c_meldung) = is_conf2-y_id_meldung
+*                                                  (ycl_ppst_tomis_i_prodconf=>c_vorgang) = is_conf2-y_vorgang.
+*      IF sy-subrc IS INITIAL AND <gs_alv> IS ASSIGNED.
+*        MOVE-CORRESPONDING is_conf2 TO <gs_alv>.
+*        ASSIGN COMPONENT c_y_so2_lastrec OF STRUCTURE <gs_alv> TO <lv_field>.
+*        IF sy-subrc IS INITIAL AND <lv_field> IS ASSIGNED.
+*          IF is_tomis-y_terminated IS INITIAL.
+*            IF is_conf2-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+*              <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+*            ELSEIF is_conf2-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+*              <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+*            ELSEIF is_conf2-y_conf_flag EQ abap_false AND is_tomis-y_process_flag NE abap_false.
+*              <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+*            ELSEIF is_conf2-y_conf_flag EQ abap_false AND is_tomis-y_process_flag EQ abap_false.
+*              <lv_field> = c_yellow.
+*            ENDIF.
+*          ELSE.
+*            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+*          ENDIF.
+*        ENDIF.
+*      ELSE.
+      READ TABLE gt_r1_tomis ASSIGNING FIELD-SYMBOL(<ls_tomis>) WITH KEY y_id_meldung = is_conf2-y_id_meldung
+                                                                      y_vorgang   =  is_conf2-y_vorgang.
+      IF sy-subrc IS INITIAL AND <ls_tomis> IS ASSIGNED AND <gs_alv> IS ASSIGNED.
+        MOVE-CORRESPONDING <ls_tomis> TO <gs_alv>.
+      ENDIF.
+      IF <gs_alv> IS ASSIGNED.
+        MOVE-CORRESPONDING is_conf2 TO <gs_alv>.
+      ENDIF.
+      ASSIGN COMPONENT c_y_so2_lastrec OF STRUCTURE <gs_alv> TO <lv_field>.
+      IF sy-subrc IS INITIAL AND <lv_field> IS ASSIGNED.
+        IF is_tomis-y_terminated IS INITIAL.
+          IF is_conf2-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+          ELSEIF is_conf2-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+          ELSEIF is_conf2-y_conf_flag EQ abap_false AND is_tomis-y_process_flag NE abap_false.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+          ELSEIF is_conf2-y_conf_flag EQ abap_false AND is_tomis-y_process_flag EQ abap_false.
+            <lv_field> = c_yellow.
+          ENDIF.
+        ELSE.
+          <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+        ENDIF.
+      ENDIF.
+*      ENDIF.
+
+      IF gv_user_flag EQ abap_true.
+        MODIFY <gt_alv> FROM <gs_alv> INDEX gv_tabix.
+      ELSE.
+        APPEND <gs_alv> TO <gt_alv>.
+      ENDIF.
+
+    ENDIF.
+
+  ENDMETHOD.
+  METHOD fill_alv_conf3 .
+* Description    : To fill the alv structure
+    FIELD-SYMBOLS <lv_field> TYPE any.
+
+    IF is_tomis IS NOT INITIAL AND <gs_alv> IS ASSIGNED.
+      MOVE-CORRESPONDING is_tomis TO <gs_alv>.
+    ENDIF.
+
+    IF is_conf3 IS NOT INITIAL.
+*      READ TABLE <gt_alv> ASSIGNING <gs_alv> WITH KEY (ycl_ppst_tomis_i_prodconf=>c_meldung) = is_conf3-y_id_meldung
+*                                                  (ycl_ppst_tomis_i_prodconf=>c_vorgang) = is_conf3-y_vorgang.
+*      IF sy-subrc IS INITIAL AND <gs_alv> IS ASSIGNED.
+*        MOVE-CORRESPONDING is_conf3 TO <gs_alv>.
+*        ASSIGN COMPONENT c_y_so2_lastrec OF STRUCTURE <gs_alv> TO <lv_field>.
+*        IF sy-subrc IS INITIAL AND <lv_field> IS ASSIGNED.
+*          IF is_tomis-y_terminated IS INITIAL.
+*            IF is_conf3-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+*              <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+*            ELSEIF is_conf3-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+*              <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+*            ELSEIF is_conf3-y_conf_flag EQ abap_false AND is_tomis-y_process_flag NE abap_false.
+*              <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+*            ELSEIF is_conf3-y_conf_flag EQ abap_false AND is_tomis-y_process_flag EQ abap_false.
+*              <lv_field> = c_yellow.
+*            ENDIF.
+*          ELSE.
+*            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+*          ENDIF.
+*        ENDIF.
+*      ELSE.
+      READ TABLE gt_r1_tomis ASSIGNING FIELD-SYMBOL(<ls_tomis>) WITH KEY y_id_meldung = is_conf3-y_id_meldung
+                                                                      y_vorgang   =  is_conf3-y_vorgang.
+      IF sy-subrc IS INITIAL AND <ls_tomis> IS ASSIGNED AND <gs_alv> IS ASSIGNED.
+        MOVE-CORRESPONDING <ls_tomis> TO <gs_alv>.
+      ENDIF.
+      IF <gs_alv> IS ASSIGNED.
+        MOVE-CORRESPONDING is_conf3 TO <gs_alv>.
+      ENDIF.
+      ASSIGN COMPONENT c_y_so2_lastrec OF STRUCTURE <gs_alv> TO <lv_field>.
+      IF sy-subrc IS INITIAL AND <lv_field> IS ASSIGNED.
+        IF is_tomis-y_terminated IS INITIAL.
+          IF is_conf3-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+          ELSEIF is_conf3-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+          ELSEIF is_conf3-y_conf_flag EQ abap_false AND is_tomis-y_process_flag NE abap_false.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+          ELSEIF is_conf3-y_conf_flag EQ abap_false AND is_tomis-y_process_flag EQ abap_false.
+            <lv_field> = c_yellow.
+          ENDIF.
+        ELSE.
+          <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+        ENDIF.
+      ENDIF.
+*      ENDIF.
+
+      IF gv_user_flag EQ abap_true.
+        MODIFY <gt_alv> FROM <gs_alv> INDEX gv_tabix.
+      ELSE.
+        APPEND <gs_alv> TO <gt_alv>.
+      ENDIF.
+
+    ENDIF.
+
+  ENDMETHOD.
+  METHOD fill_alv_conf4 .
+* Description    : To fill the alv structure
+    FIELD-SYMBOLS <lv_field> TYPE any.
+
+    IF is_tomis IS NOT INITIAL AND <gs_alv> IS ASSIGNED.
+      MOVE-CORRESPONDING is_tomis TO <gs_alv>.
+    ENDIF.
+
+    IF is_conf4 IS NOT INITIAL.
+*      READ TABLE <gt_alv> ASSIGNING <gs_alv> WITH KEY (ycl_ppst_tomis_i_prodconf=>c_meldung) = is_conf4-y_id_meldung
+*                                                  (ycl_ppst_tomis_i_prodconf=>c_vorgang) = is_conf4-y_vorgang.
+*      IF sy-subrc IS INITIAL AND <gs_alv> IS ASSIGNED.
+*        MOVE-CORRESPONDING is_conf4 TO <gs_alv>.
+*        ASSIGN COMPONENT c_y_so2_lastrec OF STRUCTURE <gs_alv> TO <lv_field>.
+*        IF sy-subrc IS INITIAL AND <lv_field> IS ASSIGNED.
+*          IF is_tomis-y_terminated IS INITIAL.
+*            IF is_conf4-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+*              <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+*            ELSEIF is_conf4-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+*              <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+*            ELSEIF is_conf4-y_conf_flag EQ abap_false AND is_tomis-y_process_flag NE abap_false.
+*              <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+*            ELSEIF is_conf4-y_conf_flag EQ abap_false AND is_tomis-y_process_flag EQ abap_false.
+*              <lv_field> = c_yellow.
+*            ENDIF.
+*          ELSE.
+*            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+*          ENDIF.
+*        ENDIF.
+*      ELSE.
+      READ TABLE gt_r1_tomis ASSIGNING FIELD-SYMBOL(<ls_tomis>) WITH KEY y_id_meldung = is_conf4-y_id_meldung
+                                                                      y_vorgang   =  is_conf4-y_vorgang.
+      IF sy-subrc IS INITIAL AND <ls_tomis> IS ASSIGNED AND <gs_alv> IS ASSIGNED.
+        MOVE-CORRESPONDING <ls_tomis> TO <gs_alv>.
+      ENDIF.
+      IF <gs_alv> IS ASSIGNED.
+        MOVE-CORRESPONDING is_conf4 TO <gs_alv>.
+      ENDIF.
+      ASSIGN COMPONENT c_y_so2_lastrec OF STRUCTURE <gs_alv> TO <lv_field>.
+      IF sy-subrc IS INITIAL AND <lv_field> IS ASSIGNED.
+        IF is_tomis-y_terminated IS INITIAL.
+          IF is_conf4-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+          ELSEIF is_conf4-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+          ELSEIF is_conf4-y_conf_flag EQ abap_false AND is_tomis-y_process_flag NE abap_false.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+          ELSEIF is_conf4-y_conf_flag EQ abap_false AND is_tomis-y_process_flag EQ abap_false.
+            <lv_field> = c_yellow.
+          ENDIF.
+        ELSE.
+          <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+        ENDIF.
+      ENDIF.
+*      ENDIF.
+
+      IF gv_user_flag EQ abap_true.
+        MODIFY <gt_alv> FROM <gs_alv> INDEX gv_tabix.
+      ELSE.
+        APPEND <gs_alv> TO <gt_alv>.
+      ENDIF.
+    ENDIF.
+
+  ENDMETHOD.
+  METHOD fill_alv_slab .
+* Description    : To fill the alv structure
+    FIELD-SYMBOLS <lv_field> TYPE any.
+
+    IF is_tomis IS NOT INITIAL AND <gs_alv> IS ASSIGNED.
+      MOVE-CORRESPONDING is_tomis TO <gs_alv>.
+    ENDIF.
+
+    IF is_slab IS NOT INITIAL.
+*      READ TABLE <gt_alv> ASSIGNING <gs_alv> WITH KEY (ycl_ppst_tomis_i_prodconf=>c_meldung) = is_slab-y_id_meldung
+*                                                  (ycl_ppst_tomis_i_prodconf=>c_vorgang) = is_slab-y_vorgang.
+*      IF sy-subrc IS INITIAL AND <gs_alv> IS ASSIGNED.
+*        MOVE-CORRESPONDING is_slab TO <gs_alv>.
+*        ASSIGN COMPONENT c_y_so2_lastrec OF STRUCTURE <gs_alv> TO <lv_field>.
+*        IF sy-subrc IS INITIAL AND <lv_field> IS ASSIGNED.
+*          IF is_tomis-y_terminated IS INITIAL.
+*            IF is_slab-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+*              <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+*            ELSEIF is_slab-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+*              <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+*            ELSEIF is_slab-y_conf_flag EQ abap_false AND is_tomis-y_process_flag NE abap_false.
+*              <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+*            ELSEIF is_slab-y_conf_flag EQ abap_false AND is_tomis-y_process_flag EQ abap_false.
+*              <lv_field> = c_yellow.
+*            ENDIF.
+*          ELSE.
+*            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+*          ENDIF.
+*        ENDIF.
+*      ELSE.
+      READ TABLE gt_r1_tomis ASSIGNING FIELD-SYMBOL(<ls_tomis>) WITH KEY y_id_meldung = is_slab-y_id_meldung
+                                                                      y_vorgang   =  is_slab-y_vorgang.
+      IF sy-subrc IS INITIAL AND <ls_tomis> IS ASSIGNED AND <gs_alv> IS ASSIGNED.
+        MOVE-CORRESPONDING <ls_tomis> TO <gs_alv>.
+      ENDIF.
+      IF <gs_alv> IS ASSIGNED.
+        MOVE-CORRESPONDING is_slab TO <gs_alv>.
+      ENDIF.
+      ASSIGN COMPONENT c_y_so2_lastrec OF STRUCTURE <gs_alv> TO <lv_field>.
+      IF sy-subrc IS INITIAL AND <lv_field> IS ASSIGNED.
+        IF is_tomis-y_terminated IS INITIAL.
+          IF is_slab-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+          ELSEIF is_slab-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+          ELSEIF is_slab-y_conf_flag EQ abap_false AND is_tomis-y_process_flag NE abap_false.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+          ELSEIF is_slab-y_conf_flag EQ abap_false AND is_tomis-y_process_flag EQ abap_false.
+            <lv_field> = c_yellow.
+          ENDIF.
+        ELSE.
+          <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+        ENDIF.
+      ENDIF.
+*      ENDIF.
+
+      IF gv_user_flag EQ abap_true.
+        MODIFY <gt_alv> FROM <gs_alv> INDEX gv_tabix.
+      ELSE.
+        APPEND <gs_alv> TO <gt_alv>.
+      ENDIF.
+    ENDIF.
+
+  ENDMETHOD.
+  METHOD fill_alv_batch .
+* Description    : To fill the alv structure
+    FIELD-SYMBOLS <lv_field> TYPE any.
+    CLEAR:<gs_alv>.
+    IF is_tomis IS NOT INITIAL AND <gs_alv> IS ASSIGNED.
+      MOVE-CORRESPONDING is_tomis TO <gs_alv>.
+    ENDIF.
+
+    IF is_batch IS NOT INITIAL.
+*      READ TABLE <gt_alv> ASSIGNING <gs_alv> WITH KEY (ycl_ppst_tomis_i_prodconf=>c_meldung) = is_batch-y_id_meldung
+*                                                  (ycl_ppst_tomis_i_prodconf=>c_vorgang) = is_batch-y_vorgang.
+*      IF sy-subrc IS INITIAL AND <gs_alv> IS ASSIGNED.
+*        MOVE-CORRESPONDING is_batch TO <gs_alv>.
+*        ASSIGN COMPONENT c_y_so2_lastrec OF STRUCTURE <gs_alv> TO <lv_field>.
+*        IF sy-subrc IS INITIAL AND <lv_field> IS ASSIGNED.
+*          IF is_tomis-y_terminated IS INITIAL.
+*            IF is_batch-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+*              <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+*            ELSEIF is_batch-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+*              <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+*            ELSEIF is_batch-y_conf_flag EQ abap_false AND is_tomis-y_process_flag NE abap_false.
+*              <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+*            ELSEIF is_batch-y_conf_flag EQ abap_false AND is_tomis-y_process_flag EQ abap_false.
+*              <lv_field> = c_yellow.
+*            ENDIF.
+*          ELSE.
+*            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+*          ENDIF.
+*        ENDIF.
+*      ELSE.
+      READ TABLE gt_r1_tomis ASSIGNING FIELD-SYMBOL(<ls_tomis>) WITH KEY y_id_meldung = is_batch-y_id_meldung
+                                                                      y_vorgang   =  is_batch-y_vorgang.
+      IF sy-subrc IS INITIAL AND <ls_tomis> IS ASSIGNED AND <gs_alv> IS ASSIGNED.
+        MOVE-CORRESPONDING <ls_tomis> TO <gs_alv>.
+      ENDIF.
+      IF <gs_alv> IS ASSIGNED.
+        MOVE-CORRESPONDING is_batch TO <gs_alv>.
+      ENDIF.
+      ASSIGN COMPONENT c_y_so2_lastrec OF STRUCTURE <gs_alv> TO <lv_field>.
+      IF sy-subrc IS INITIAL AND <lv_field> IS ASSIGNED.
+        IF is_tomis-y_terminated IS INITIAL.
+          IF is_batch-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+          ELSEIF is_batch-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+          ELSEIF is_batch-y_conf_flag EQ abap_false AND is_tomis-y_process_flag NE abap_false.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+          ELSEIF is_batch-y_conf_flag EQ abap_false AND is_tomis-y_process_flag EQ abap_false.
+            <lv_field> = c_yellow.
+          ENDIF.
+        ELSE.
+          <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+        ENDIF.
+      ENDIF.
+*      ENDIF.
+
+      IF gv_user_flag EQ abap_true.
+        MODIFY <gt_alv> FROM <gs_alv> INDEX gv_tabix.
+      ELSE.
+        APPEND <gs_alv> TO <gt_alv>.
+      ENDIF.
+    ENDIF.
+
+  ENDMETHOD.
+**BOC for CL#3
+  METHOD fill_alv_confz .
+* Description    : To fill the alv structure
+    FIELD-SYMBOLS <lv_field> TYPE any.
+
+    IF is_tomis IS NOT INITIAL AND <gs_alv> IS ASSIGNED.
+      MOVE-CORRESPONDING is_tomis TO <gs_alv>.
+    ENDIF.
+
+    IF is_confz IS NOT INITIAL.
+*      READ TABLE <gt_alv> ASSIGNING <gs_alv> WITH KEY (ycl_ppst_tomis_i_prodconf=>c_meldung) = is_confz-y_id_meldung
+*                                                  (ycl_ppst_tomis_i_prodconf=>c_vorgang) = is_confz-y_vorgang.
+*      IF sy-subrc IS INITIAL AND <gs_alv> IS ASSIGNED.
+*        MOVE-CORRESPONDING is_confz TO <gs_alv>.
+*        ASSIGN COMPONENT c_y_so2_lastrec OF STRUCTURE <gs_alv> TO <lv_field>.
+*        IF sy-subrc IS INITIAL AND <lv_field> IS ASSIGNED.
+*          IF is_tomis-y_terminated IS INITIAL.
+*            IF is_confz-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+*              <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+*            ELSEIF is_confz-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+*              <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+*            ELSEIF is_confz-y_conf_flag EQ abap_false AND is_tomis-y_process_flag NE abap_false.
+*              <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+*            ELSEIF is_confz-y_conf_flag EQ abap_false AND is_tomis-y_process_flag EQ abap_false.
+*              <lv_field> = c_yellow.
+*            ENDIF.
+*          ELSE.
+*            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+*          ENDIF.
+*        ENDIF.
+*      ELSE.
+      READ TABLE gt_r1_tomis ASSIGNING FIELD-SYMBOL(<ls_tomis>) WITH KEY y_id_meldung = is_confz-y_id_meldung
+                                                                      y_vorgang   =  is_confz-y_vorgang.
+      IF sy-subrc IS INITIAL AND <ls_tomis> IS ASSIGNED AND <gs_alv> IS ASSIGNED.
+        MOVE-CORRESPONDING <ls_tomis> TO <gs_alv>.
+      ENDIF.
+      IF <gs_alv> IS ASSIGNED.
+        MOVE-CORRESPONDING is_confz TO <gs_alv>.
+      ENDIF.
+      ASSIGN COMPONENT c_y_so2_lastrec OF STRUCTURE <gs_alv> TO <lv_field>.
+      IF sy-subrc IS INITIAL AND <lv_field> IS ASSIGNED.
+        IF is_tomis-y_terminated IS INITIAL.
+          IF is_confz-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+          ELSEIF is_confz-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+          ELSEIF is_confz-y_conf_flag EQ abap_false AND is_tomis-y_process_flag NE abap_false.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+          ELSEIF is_confz-y_conf_flag EQ abap_false AND is_tomis-y_process_flag EQ abap_false.
+            <lv_field> = c_yellow.
+          ENDIF.
+        ELSE.
+          <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+        ENDIF.
+      ENDIF.
+*      ENDIF.
+      IF gv_user_flag EQ abap_true.
+        MODIFY <gt_alv> FROM <gs_alv> INDEX gv_tabix.
+      ELSE.
+        APPEND <gs_alv> TO <gt_alv>.
+      ENDIF.
+    ENDIF.
+
+  ENDMETHOD.
+**EOC for CL#3
+  METHOD display_alv.
+    DATA: lo_sort      TYPE REF TO cl_salv_sorts,
+          lo_events    TYPE REF TO cl_salv_events_table,
+          lo_col       TYPE REF TO cl_salv_column_list,
+          lo_cols      TYPE REF TO cl_salv_columns,
+          lo_functions TYPE REF TO cl_salv_functions,
+          lv_text      TYPE string,
+          lv_icon      TYPE string.
+
+*  Display ALV
+    TRY.
+* Create object for ALV
+        CALL METHOD cl_salv_table=>factory(
+          EXPORTING
+            list_display   = if_salv_c_bool_sap=>false
+            r_container    = go_graphic_parent2
+            container_name = c_tomis_tree
+          IMPORTING
+            r_salv_table   = go_grid_right
+          CHANGING
+            t_table        = xt_table ).
+
+******For Sorting the internal Table on 'Y_ID_MELDUNG'
+        lo_sort = go_grid_right->get_sorts( ).
+        TRY.
+            CALL METHOD lo_sort->add_sort
+              EXPORTING
+                columnname = ycl_ppst_tomis_i_prodconf=>c_meldung
+                position   = 1.
+
+          CATCH cx_salv_not_found ##no_handler.
+          CATCH cx_salv_existing ##no_handler.
+          CATCH cx_salv_data_error ##no_handler.
+        ENDTRY.
+* Optimize columns
+        go_grid_right->get_columns( )->set_optimize( if_salv_c_bool_sap=>true ).
+        DATA(lo_columns) = go_grid_right->get_columns( ).
+        lo_columns->set_key_fixation( value = abap_true ).
+
+**   Pf status
+        TRY.
+            lo_functions = go_grid_right->get_functions( ).
+            lo_functions->set_all( abap_true ).
+          CATCH cx_salv_not_found.
+            CLEAR: lo_functions.
+        ENDTRY.
+* Add the button in Menu bar of ALV
+        lv_text = TEXT-016.
+        lv_icon = icon_allow.
+        TRY.
+            lo_functions->add_function(
+              name     = c_myfunction
+              icon     = lv_icon
+              text     = lv_text
+              tooltip  = lv_text
+              position = if_salv_c_function_position=>right_of_salv_functions ).
+          CATCH cx_salv_existing cx_salv_wrong_call.
+        ENDTRY.
+        CLEAR:lv_text,lv_icon.
+        lv_text = TEXT-017.
+        lv_icon = icon_reject.
+        TRY.
+            lo_functions->add_function(
+              name     = c_myfunction1
+              icon     = lv_icon
+              text     = lv_text
+              tooltip  = lv_text
+              position = if_salv_c_function_position=>right_of_salv_functions ).
+          CATCH cx_salv_existing cx_salv_wrong_call.
+        ENDTRY.
+        CLEAR:lv_text,lv_icon.
+        lv_text = TEXT-018.
+        lv_icon = icon_system_redo.
+        TRY.
+            lo_functions->add_function(
+              name     = c_myfunction2
+              icon     = lv_icon
+              text     = lv_text
+              tooltip  = lv_text
+              position = if_salv_c_function_position=>right_of_salv_functions ).
+          CATCH cx_salv_existing cx_salv_wrong_call.
+        ENDTRY.
+* Multiply selection
+        go_selections = go_grid_right->get_selections( ).
+        go_selections->set_selection_mode( if_salv_c_selection_mode=>row_column ).
+
+***  Set Up the Hotspot & Event Handler
+        CALL METHOD set_hotspot_fields
+          CHANGING
+            xo_alv = go_grid_right.
+
+        TRY .
+            IF it_ref  IS NOT INITIAL.
+              LOOP AT it_ref ASSIGNING FIELD-SYMBOL(<ls_ref>).
+                DATA(lo_column) = lo_columns->get_column( <ls_ref>-field ).
+                lo_column->set_ddic_reference( <ls_ref> ).
+              ENDLOOP.
+            ENDIF.
+            lo_columns->set_exception_column( value = c_y_so2_lastrec ).
+
+            lo_cols = go_grid_right->get_columns( ).
+            lo_cols->set_optimize( abap_true ).
+
+            lo_col ?= lo_cols->get_column( c_y_so2_lastrec ).
+            lo_col->set_long_text( TEXT-014 ).
+
+          CATCH cx_salv_not_found ##no_handler.
+          CATCH cx_salv_existing ##no_handler.
+          CATCH cx_salv_data_error ##no_handler.
+        ENDTRY.
+
+* layout
+        go_layout  = go_grid_right->get_layout( ).
+        gs_key-report = sy-repid.
+        go_layout->set_key( gs_key ).
+        go_layout->set_initial_layout( gv_layout ).
+        go_layout->set_save_restriction( if_salv_c_layout=>restrict_none ).
+
+* ALV Events
+        lo_events = go_grid_right->get_event( ).
+        SET HANDLER: handle_double_click FOR lo_events,
+                     on_user_command     FOR lo_events.
+
+
+        go_grid_right->display( ).
+
+      CATCH cx_salv_msg INTO DATA(lo_msg).
+
+    ENDTRY.
+
+  ENDMETHOD.
+  METHOD set_hotspot_fields.
+* Description        :
+*...To get HotSpot for selected fields
+    DATA: lo_cols_tab       TYPE REF TO cl_salv_columns_table,
+          lo_col_tab        TYPE REF TO cl_salv_column_table,
+*...Events
+          lo_events         TYPE REF TO cl_salv_events_table,
+          lr_msg_data_error TYPE REF TO cx_salv_data_error,
+          lr_msg_not_found  TYPE REF TO cx_salv_not_found.
+
+*   get Columns object
+    lo_cols_tab = go_grid_right->get_columns( ).
+*
+*   Get Batch column
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_sap_batch_no ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for Batch Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+
+***BOC for CL#1
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_input_batch1 ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for Batch Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_input_batch2 ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for Batch Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_input_batch3 ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for Batch Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_input_batch4 ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for Batch Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_input_batch5 ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for Batch Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+***EOC for CL1
+
+*   Get SAP KMAT column
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_sap_kmat ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for SAP KMAT Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+
+***BOC for CL#1
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_sap_input_material1 ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for SAP KMAT Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_sap_input_material2 ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for SAP KMAT Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_sap_input_material3 ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for SAP KMAT Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_sap_input_material4 ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for SAP KMAT Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_sap_input_material5 ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for SAP KMAT Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+***EOC for CL#1
+**   Get Production Order 1 to 5 column
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_po1 ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for Production Order1 Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+**   Get Production Order1 column
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_po2 ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for Production Order1 Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+
+*   Get Production Order1 column
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_po3 ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for Production Order1 Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+
+*   Get Production Order1 column
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_po4 ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for Production Order1 Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+
+*   Get Production Order1 column
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_po5 ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for Production Order1 Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+
+*   Get Production Order1 column
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_po ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for Production Order1 Column
+    CLEAR: gv_msg_text.
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+
+* Get Sales order 1 to 5
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_sap_so ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+**
+*   Set the HotSpot for Sales order1 Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_sap_so1 ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+**
+*   Set the HotSpot for Sales order1 Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+**   Get Sales order2 column
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_sap_so2 ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for Sales order2 Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+
+*   Get Sales order3 column
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_sap_so3 ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for Sales order3 Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+
+*   Get Sales order4 column
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_sap_so4 ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for Sales order4 Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+
+*   Get Sales order5 column
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_sap_so5 ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for Sales order5 Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+
+*   Get Purchase Order column
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_ebeln ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for Purchase Order Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+
+*   Get SAP Work Center column
+    CLEAR: gv_msg_text.
+    TRY.
+        lo_col_tab ?= lo_cols_tab->get_column( c_y_sap_work_center ).
+      CATCH cx_salv_not_found INTO lr_msg_not_found.
+        gv_msg_text = lr_msg_not_found->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+*
+*   Set the HotSpot for SAP Work Center Column
+    TRY.
+        CALL METHOD lo_col_tab->set_cell_type
+          EXPORTING
+            value = if_salv_c_cell_type=>hotspot.
+      CATCH cx_salv_data_error INTO lr_msg_data_error.
+        gv_msg_text = lr_msg_data_error->get_text( ).
+        MESSAGE gv_msg_text TYPE ycl_ppst_tomis_i_prodconf=>c_error.
+    ENDTRY.
+
+*   all events
+    lo_events = xo_alv->get_event( ).
+
+*   event handler
+    SET HANDLER on_link_click FOR lo_events.
+
+
+  ENDMETHOD.
+  METHOD on_link_click.
+* Description        : Handle the link click events in ALV
+*    DATA: lv_batch TYPE yppst_r1_sap_batch_no,
+*          lv_kmat  TYPE yppst_r1_sap_kmat.
+*          lv_tcode TYPE tstc-tcode,
+
+
+    FIELD-SYMBOLS: <lv_field> TYPE any.
+
+*   Get the records from the final table
+    READ TABLE <gt_alv> ASSIGNING <gs_alv> INDEX row.
+    IF sy-subrc IS INITIAL.
+*      MOVE-CORRESPONDING <gs_alv> TO ls_data.
+      CASE column.
+        WHEN c_y_sap_batch_no.
+
+          ASSIGN COMPONENT c_y_sap_kmat OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_mat FIELD <lv_field>.
+          ENDIF.
+
+          ASSIGN COMPONENT c_y_sap_batch_no OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_cha FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_msc3n AND SKIP FIRST SCREEN.
+
+***BOC for CL#1
+        WHEN c_y_input_batch1.
+
+          ASSIGN COMPONENT c_y_sap_input_material1 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_mat FIELD <lv_field>.
+          ENDIF.
+
+          ASSIGN COMPONENT c_y_input_batch1 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_cha FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_msc3n AND SKIP FIRST SCREEN.
+
+        WHEN c_y_input_batch2.
+
+          ASSIGN COMPONENT c_y_sap_input_material2 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_mat FIELD <lv_field>.
+          ENDIF.
+
+          ASSIGN COMPONENT c_y_input_batch2 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_cha FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_msc3n AND SKIP FIRST SCREEN.
+
+        WHEN c_y_input_batch3.
+
+          ASSIGN COMPONENT c_y_sap_input_material3 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_mat FIELD <lv_field>.
+          ENDIF.
+
+          ASSIGN COMPONENT c_y_input_batch3 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_cha FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_msc3n AND SKIP FIRST SCREEN.
+
+        WHEN c_y_input_batch4.
+
+          ASSIGN COMPONENT c_y_sap_input_material4 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_mat FIELD <lv_field>.
+          ENDIF.
+
+          ASSIGN COMPONENT c_y_input_batch4 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_cha FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_msc3n AND SKIP FIRST SCREEN.
+
+        WHEN c_y_input_batch5.
+
+          ASSIGN COMPONENT c_y_sap_input_material5 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_mat FIELD <lv_field>.
+          ENDIF.
+
+          ASSIGN COMPONENT c_y_input_batch5 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_cha FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_msc3n AND SKIP FIRST SCREEN.
+***EOC for CL#1
+
+        WHEN c_y_sap_kmat.
+
+          ASSIGN COMPONENT c_y_sap_kmat OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_mat FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_mm03 AND SKIP FIRST SCREEN.
+***BOC for CL#1
+        WHEN c_y_sap_input_material1.
+
+          ASSIGN COMPONENT c_y_sap_input_material1 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_mat FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_mm03 AND SKIP FIRST SCREEN.
+
+        WHEN c_y_sap_input_material2.
+
+          ASSIGN COMPONENT c_y_sap_input_material2 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_mat FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_mm03 AND SKIP FIRST SCREEN.
+
+        WHEN c_y_sap_input_material3.
+
+          ASSIGN COMPONENT c_y_sap_input_material3 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_mat FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_mm03 AND SKIP FIRST SCREEN.
+
+        WHEN c_y_sap_input_material4.
+
+          ASSIGN COMPONENT c_y_sap_input_material4 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_mat FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_mm03 AND SKIP FIRST SCREEN.
+
+        WHEN c_y_sap_input_material5.
+
+          ASSIGN COMPONENT c_y_sap_input_material5 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_mat FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_mm03 AND SKIP FIRST SCREEN.
+
+***EOC for CL#1
+        WHEN c_y_po.
+
+          ASSIGN COMPONENT c_y_po OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_anr FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_co03 AND SKIP FIRST SCREEN.
+
+        WHEN c_y_po1.
+
+          ASSIGN COMPONENT c_y_po1 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_anr FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_co03 AND SKIP FIRST SCREEN.
+*
+        WHEN c_y_po2.
+
+          ASSIGN COMPONENT c_y_po2 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_anr FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_co03 AND SKIP FIRST SCREEN.
+
+        WHEN c_y_po3.
+
+          ASSIGN COMPONENT c_y_po3 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_anr FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_co03 AND SKIP FIRST SCREEN.
+
+        WHEN c_y_po4.
+
+          ASSIGN COMPONENT c_y_po4 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_anr FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_co03 AND SKIP FIRST SCREEN.
+
+        WHEN c_y_po5.
+
+          ASSIGN COMPONENT c_y_po5 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_anr FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_co03 AND SKIP FIRST SCREEN.
+
+        WHEN c_y_sap_so.
+
+          ASSIGN COMPONENT c_y_sap_so OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_aun FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_va03 AND SKIP FIRST SCREEN.
+
+        WHEN c_y_sap_so1.
+
+          ASSIGN COMPONENT c_y_sap_so1 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_aun FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_va03 AND SKIP FIRST SCREEN.
+
+        WHEN c_y_sap_so2.
+
+          ASSIGN COMPONENT c_y_sap_so2 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_aun FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_va03 AND SKIP FIRST SCREEN.
+
+        WHEN c_y_sap_so3.
+
+          ASSIGN COMPONENT c_y_sap_so3 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_aun FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_va03 AND SKIP FIRST SCREEN.
+
+        WHEN c_y_sap_so4.
+
+          ASSIGN COMPONENT c_y_sap_so4 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_aun FIELD <lv_field>.
+          ENDIF.
+          CALL TRANSACTION c_va03 AND SKIP FIRST SCREEN.
+
+        WHEN c_y_sap_so5.
+
+          ASSIGN COMPONENT c_y_sap_so5 OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_aun FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_va03 AND SKIP FIRST SCREEN.
+
+        WHEN c_ebeln.
+
+          ASSIGN COMPONENT c_ebeln OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_bes FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_me23n AND SKIP FIRST SCREEN.
+
+        WHEN c_y_sap_work_center.
+
+          ASSIGN COMPONENT c_werks OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_wrk FIELD <lv_field>.
+          ENDIF.
+
+          ASSIGN COMPONENT c_y_sap_work_center OF STRUCTURE <gs_alv> TO <lv_field>.
+          IF sy-subrc IS INITIAL.
+            SET PARAMETER ID c_agr FIELD <lv_field>.
+          ENDIF.
+
+          CALL TRANSACTION c_cr03 AND SKIP FIRST SCREEN.
+
+        WHEN OTHERS.
+      ENDCASE.
+    ENDIF.
+
+  ENDMETHOD.
+  METHOD handle_double_click.
+* Description        : Handle the double click events in ALV for ZPPSE_CHECK
+
+    FIELD-SYMBOLS: <lv_meldung> TYPE yppst_r1_id_meldung,
+                   <lv_vorgang> TYPE yppst_r1_vorgang.
+
+*   Get the records from the final table
+    READ TABLE <gt_alv> ASSIGNING FIELD-SYMBOL(<ls_alv>) INDEX row.
+    IF sy-subrc IS INITIAL.
+      ASSIGN COMPONENT ycl_ppst_tomis_i_prodconf=>c_meldung OF STRUCTURE <ls_alv> TO <lv_meldung>.
+      IF sy-subrc IS INITIAL.
+        SET PARAMETER ID c_para1 FIELD <lv_meldung>.
+      ENDIF.
+
+      ASSIGN COMPONENT ycl_ppst_tomis_i_prodconf=>c_vorgang OF STRUCTURE <ls_alv> TO <lv_vorgang>.
+      IF sy-subrc IS INITIAL.
+        SET PARAMETER ID c_para2 FIELD <lv_vorgang>.
+      ENDIF.
+
+      CALL TRANSACTION c_zppse_check WITH AUTHORITY-CHECK.
+
+    ENDIF.
+  ENDMETHOD.
+  METHOD on_user_command.
+** Description        :Calling method to reprocess the error data
+
+    DATA: lt_tomis      TYPE STANDARD TABLE OF yppst_r1_tomis,
+          lt_slab       TYPE STANDARD TABLE OF yppst_r1_purslab,
+          ls_slab       TYPE yppst_r1_purslab,
+          lt_batch      TYPE STANDARD TABLE OF yppst_r1_batchup,
+          ls_batch      TYPE yppst_r1_batchup,
+          lt_conf1      TYPE STANDARD TABLE OF yppst_r1_conf1,
+          lt_conf2      TYPE STANDARD TABLE OF yppst_r1_conf2,
+          lt_conf3      TYPE STANDARD TABLE OF yppst_r1_conf3,
+          lt_conf4      TYPE STANDARD TABLE OF yppst_r1_conf4,
+          ls_conf1      TYPE yppst_r1_conf1,
+          ls_conf2      TYPE yppst_r1_conf2,
+          ls_conf3      TYPE yppst_r1_conf3,
+          ls_conf4      TYPE yppst_r1_conf4,
+          lv_tomisid    TYPE yppst_r1_id_meldung,
+          lv_ans        TYPE char1,
+          lt_rows       TYPE salv_t_row,
+          lr_selections TYPE REF TO cl_salv_selections,
+          lv_index      TYPE int4,
+          lv_function   TYPE salv_de_function,
+**BOC for CL#3
+          lt_confz      TYPE STANDARD TABLE OF yppst_r1_confz,
+          ls_confz      TYPE yppst_r1_confz.
+**EOC for CL#3
+
+
+
+    FIELD-SYMBOLS: <lv_field>   TYPE any,
+                   <lv_meldung> TYPE yppst_r1_id_meldung,
+                   <lv_vorgang> TYPE yppst_r1_vorgang.
+
+    lv_function = e_salv_function.
+
+    CASE lv_function.
+
+      WHEN c_myfunction.
+* Description        :To Terminated the records
+
+        CLEAR: lt_rows[],lv_index,lt_tomis[],lv_ans.
+
+        CALL METHOD go_grid_right->get_metadata.
+
+        lr_selections = go_grid_right->get_selections( ).
+        lt_rows = lr_selections->get_selected_rows( ).
+
+*  Message for confirming the records need to be terminated
+        IF lt_rows[] IS NOT INITIAL.
+* Pop up
+          CALL FUNCTION 'POPUP_TO_CONFIRM'
+            EXPORTING
+              text_question = TEXT-012
+            IMPORTING
+              answer        = lv_ans.
+
+          IF lv_ans = c_ans_1.
+            LOOP AT lt_rows ASSIGNING FIELD-SYMBOL(<ls_rows>).
+              lv_index = <ls_rows>.
+              READ TABLE <gt_alv> ASSIGNING <gs_alv> INDEX lv_index.
+              IF sy-subrc IS INITIAL.
+                ASSIGN COMPONENT ycl_ppst_tomis_i_prodconf=>c_meldung OF STRUCTURE <gs_alv> TO <lv_meldung>.
+                IF sy-subrc IS INITIAL.
+                  ASSIGN COMPONENT c_y_vorgang OF STRUCTURE <gs_alv> TO <lv_vorgang>.
+                ENDIF.
+                IF sy-subrc IS INITIAL AND <lv_meldung> IS ASSIGNED.
+                  READ TABLE gt_r1_tomis ASSIGNING FIELD-SYMBOL(<ls_tomis>) WITH KEY y_id_meldung = <lv_meldung>
+                                                                                     y_vorgang    = <lv_vorgang>.
+                  IF sy-subrc IS INITIAL AND <ls_tomis> IS ASSIGNED.
+**BOC for CL#3
+                    READ TABLE gt_ds_tom ASSIGNING FIELD-SYMBOL(<ls_ds_tom>) WITH KEY y_id_meldung = <lv_meldung>
+                                                                                     y_vorgang    = <lv_vorgang>.
+                    IF sy-subrc IS INITIAL.
+                      <ls_ds_tom>-y_terminated = abap_true.
+**BOC for CL#4
+                      LOOP AT gt_errlog INTO DATA(ls_errlog)
+                            WHERE y_id_meldung = <ls_ds_tom>-y_id_meldung.
+                        DELETE yppst_r1_errlog FROM ls_errlog.
+                        COMMIT WORK.
+                      ENDLOOP.
+                      DELETE gt_errlog  WHERE y_id_meldung = <ls_ds_tom>-y_id_meldung.
+                      CLEAR ls_errlog.
+**EOC for CL#4
+                    ENDIF.
+**EOC for CL#3
+                    <ls_tomis>-y_laeda   = sy-datum.
+                    <ls_tomis>-y_aenam   = sy-uname.
+                    <ls_tomis>-y_as4time   = sy-uzeit.
+                    <ls_tomis>-y_terminated = abap_true.
+                    APPEND <ls_tomis> TO lt_tomis.
+                    CASE <ls_tomis>-y_sap_conf_table.
+**                WHEN c_yppst_r1_conf1.
+**                  ls_conf1-y_laeda   = sy-datum.
+**                  ls_conf1-y_aenam   = sy-uname.
+**                  ls_conf1-y_as4time   = sy-uzeit.
+**                  ls_conf1-y_terminated = abap_true.
+**                  APPEND ls_conf1 TO lt_conf1.
+**                WHEN c_yppst_r1_conf2.
+**                  ls_conf2-y_laeda   = sy-datum.
+**                  ls_conf2-y_aenam   = sy-uname.
+**                  ls_conf2-y_as4time   = sy-uzeit.
+**                  ls_conf2-y_terminated = abap_true.
+**                  APPEND ls_conf2 TO lt_conf2.
+**                WHEN c_yppst_r1_conf3.
+**                  ls_conf3-y_laeda   = sy-datum.
+**                  ls_conf3-y_aenam   = sy-uname.
+**                  ls_conf3-y_as4time   = sy-uzeit.
+**                  ls_conf3-y_terminated = abap_true.
+**                  APPEND ls_conf3 TO lt_conf3.
+**                WHEN c_yppst_r1_conf4.
+**                  ls_conf4-y_laeda   = sy-datum.
+**                  ls_conf4-y_aenam   = sy-uname.
+**                  ls_conf4-y_as4time   = sy-uzeit.
+**                  ls_conf4-y_terminated = abap_true.
+**                  APPEND ls_conf4 TO lt_conf4.
+**                WHEN c_yppst_r1_purslab.
+**                  ls_slab-y_laeda   = sy-datum.
+**                  ls_slab-y_aenam   = sy-uname.
+**                  ls_slab-y_as4time   = sy-uzeit.
+**                  ls_slab-y_terminated = abap_true.
+**                  APPEND ls_slab TO lt_slab.
+**                WHEN c_yppst_r1_batchup.
+**                  ls_batch-y_laeda   = sy-datum.
+**                  ls_batch-y_aenam   = sy-uname.
+**                  ls_batch-y_as4time   = sy-uzeit.
+**                  ls_batch-y_terminated = abap_true.
+**                  APPEND ls_batch TO lt_batch.
+**                WHEN c_yppst_r1_confz.
+**                  ls_confz-y_laeda   = sy-datum.
+**                  ls_confz-y_aenam   = sy-uname.
+**                  ls_confz-y_as4time   = sy-uzeit.
+**                  ls_confz-y_terminated = abap_true.
+**                  APPEND ls_confz TO lt_confz.
+                      WHEN OTHERS.
+                    ENDCASE.
+                  ENDIF.
+                ENDIF.
+              ENDIF.
+            ENDLOOP.
+* Moify tables
+            CALL METHOD update_table(
+              EXPORTING
+                it_tomis = lt_tomis
+                it_conf1 = lt_conf1
+                it_conf2 = lt_conf2
+                it_conf3 = lt_conf3
+                it_conf4 = lt_conf4
+                it_slab  = lt_slab
+                it_batch = lt_batch ).
+
+* Pop up
+            CALL FUNCTION 'POPUP_TO_INFORM'
+              EXPORTING
+                titel = TEXT-019
+                txt1  = TEXT-013
+                txt2  = abap_false.
+
+            IF lt_tomis[] IS NOT INITIAL.
+              select_display_alv( EXPORTING iv_user_flag = abap_true ).
+            ENDIF.
+          ENDIF.
+        ENDIF.
+      WHEN c_myfunction1.
+* Description        :To Revoke the Terminated the records
+
+        CLEAR: lt_rows[],lv_index,lt_tomis[],lv_ans.
+
+        CALL METHOD go_grid_right->get_metadata.
+
+        lr_selections = go_grid_right->get_selections( ).
+        lt_rows = lr_selections->get_selected_rows( ).
+**BOC for CL#1
+        IF lt_rows IS NOT INITIAL.
+* Pop up
+          CALL FUNCTION 'POPUP_TO_CONFIRM'
+            EXPORTING
+              text_question = TEXT-021
+            IMPORTING
+              answer        = lv_ans.
+
+          IF lv_ans = c_ans_1.
+**EOC for CL#1
+            LOOP AT lt_rows ASSIGNING <ls_rows>.
+              lv_index = <ls_rows>.
+              READ TABLE <gt_alv> ASSIGNING <gs_alv> INDEX lv_index.
+              IF sy-subrc IS INITIAL.
+                ASSIGN COMPONENT ycl_ppst_tomis_i_prodconf=>c_meldung OF STRUCTURE <gs_alv> TO <lv_meldung>.
+                IF sy-subrc IS INITIAL.
+                  ASSIGN COMPONENT c_y_vorgang OF STRUCTURE <gs_alv> TO <lv_vorgang>.
+                ENDIF.
+                IF sy-subrc IS INITIAL AND <lv_meldung> IS ASSIGNED.
+                  READ TABLE gt_r1_tomis ASSIGNING <ls_tomis> WITH KEY y_id_meldung = <lv_meldung>
+                                                                       y_vorgang    = <lv_vorgang>.
+                  IF sy-subrc IS INITIAL AND <ls_tomis> IS ASSIGNED.
+**BOC for CL#3
+                    READ TABLE gt_ds_tom ASSIGNING <ls_ds_tom> WITH KEY y_id_meldung = <lv_meldung>
+                                                                                     y_vorgang    = <lv_vorgang>.
+                    IF sy-subrc IS INITIAL.
+                      <ls_ds_tom>-y_terminated = abap_false.
+                    ENDIF.
+**EOC for CL#3
+                    <ls_tomis>-y_laeda   = sy-datum.
+                    <ls_tomis>-y_aenam   = sy-uname.
+                    <ls_tomis>-y_as4time   = sy-uzeit.
+                    <ls_tomis>-y_terminated = abap_false.
+                    APPEND <ls_tomis> TO lt_tomis.
+                    CASE <ls_tomis>-y_sap_conf_table.
+**                WHEN c_yppst_r1_conf1.
+**                  ls_conf1-y_laeda   = sy-datum.
+**                  ls_conf1-y_aenam   = sy-uname.
+**                  ls_conf1-y_as4time   = sy-uzeit.
+**                  ls_conf1-y_terminated = abap_false.
+**                  APPEND ls_conf1 TO lt_conf1.
+**                WHEN c_yppst_r1_conf2.
+**                  ls_conf2-y_laeda   = sy-datum.
+**                  ls_conf2-y_aenam   = sy-uname.
+**                  ls_conf2-y_as4time   = sy-uzeit.
+**                  ls_conf2-y_terminated = abap_false.
+**                  APPEND ls_conf2 TO lt_conf2.
+**                WHEN c_yppst_r1_conf3.
+**                  ls_conf3-y_laeda   = sy-datum.
+**                  ls_conf3-y_aenam   = sy-uname.
+**                  ls_conf3-y_as4time   = sy-uzeit.
+**                  ls_conf3-y_terminated = abap_false.
+**                  APPEND ls_conf3 TO lt_conf3.
+**                WHEN c_yppst_r1_conf4.
+**                  ls_conf4-y_laeda   = sy-datum.
+**                  ls_conf4-y_aenam   = sy-uname.
+**                  ls_conf4-y_as4time   = sy-uzeit.
+**                  ls_conf4-y_terminated = abap_false.
+**                  APPEND ls_conf4 TO lt_conf4.
+**                WHEN c_yppst_r1_purslab.
+**                  ls_slab-y_laeda   = sy-datum.
+**                  ls_slab-y_aenam   = sy-uname.
+**                  ls_slab-y_as4time   = sy-uzeit.
+**                  ls_slab-y_terminated = abap_false.
+**                  APPEND ls_slab TO lt_slab.
+**                WHEN c_yppst_r1_batchup.
+**                  ls_batch-y_laeda   = sy-datum.
+**                  ls_batch-y_aenam   = sy-uname.
+**                  ls_batch-y_as4time   = sy-uzeit.
+**                  ls_batch-y_terminated = abap_false.
+**                  APPEND ls_batch TO lt_batch.
+**                WHEN c_yppst_r1_confz.
+**                  ls_confz-y_laeda   = sy-datum.
+**                  ls_confz-y_aenam   = sy-uname.
+**                  ls_confz-y_as4time   = sy-uzeit.
+**                  ls_confz-y_terminated = abap_true.
+**                  APPEND ls_confz TO lt_confz.
+                      WHEN OTHERS.
+                    ENDCASE.
+                  ENDIF.
+                ENDIF.
+              ENDIF.
+            ENDLOOP.
+
+* Moify tables
+            CALL METHOD update_table(
+              EXPORTING
+                it_tomis = lt_tomis
+                it_conf1 = lt_conf1
+                it_conf2 = lt_conf2
+                it_conf3 = lt_conf3
+                it_conf4 = lt_conf4
+                it_slab  = lt_slab
+                it_batch = lt_batch ).
+***BOC for CL#1
+** Pop up
+            CALL FUNCTION 'POPUP_TO_INFORM'
+              EXPORTING
+                titel = TEXT-019
+                txt1  = TEXT-020
+                txt2  = abap_false.
+**EOC for CL#1
+            IF lt_rows[] IS NOT INITIAL.
+              select_display_alv( EXPORTING iv_user_flag = abap_true ).
+            ENDIF.
+          ENDIF.
+        ENDIF.
+      WHEN c_myfunction2.
+* Description        :    Logic to reprocess
+        DATA: lt_confmap         TYPE STANDARD TABLE OF yppst_r1_confmap,
+              lv_line            TYPE i,
+              lv_counter         TYPE i,
+              lv_counter2        TYPE i,
+              lt_id_meld1        TYPE tt_meldung,
+              lt_id_meld1_err    TYPE tt_meldung,
+              lt_id_meld2        TYPE tt_meldung,
+              lt_id_meld2_err    TYPE tt_meldung,
+              lt_id_meld3        TYPE tt_meldung,
+              lt_id_meld3_err    TYPE tt_meldung,
+              lt_id_meld4        TYPE tt_meldung,
+              lt_id_meld4_err    TYPE tt_meldung,
+              lt_id_meld_csa     TYPE tt_meldung,
+              lt_id_meld_csa_err TYPE tt_meldung,
+              lt_id_meld_hkm     TYPE tt_meldung,
+              lt_id_meld_hkm_err TYPE tt_meldung,
+              lt_id_meld6        TYPE tt_meldung,
+              ls_id_meld         TYPE LINE OF tt_meldung,
+**BOC for CL#3
+              lt_id_meldz        TYPE tt_meldung,
+              lt_id_meldz_err    TYPE tt_meldung.
+**EOC for CL#3
+
+*       Get the confmap data
+        SELECT *
+          FROM yppst_r1_confmap
+          INTO TABLE lt_confmap.                        "#EC CI_NOWHERE
+        IF sy-subrc IS NOT INITIAL.
+          CLEAR lt_confmap.
+        ENDIF.
+*      To identify CSA/HKM
+        SELECT *
+          FROM yppst_r1_pslbfil
+          INTO TABLE @DATA(lt_pslbfil).                 "#EC CI_NOWHERE
+        IF sy-subrc IS INITIAL.
+          SORT lt_pslbfil BY y_prog_name.
+        ENDIF.
+*
+        CALL METHOD go_grid_right->get_metadata.
+*
+        lr_selections = go_grid_right->get_selections( ).
+        lt_rows = lr_selections->get_selected_rows( ).
+
+        CLEAR: lv_index, lv_line,lv_counter .
+        IF lt_rows IS NOT INITIAL.
+          LOOP AT lt_rows ASSIGNING <ls_rows>.
+            lv_index = <ls_rows>.
+            READ TABLE <gt_alv> ASSIGNING <gs_alv> INDEX lv_index.
+            IF sy-subrc IS INITIAL AND <gs_alv> IS ASSIGNED.
+              ASSIGN COMPONENT c_y_terminated OF STRUCTURE <gs_alv> TO <lv_field>.
+              IF sy-subrc IS INITIAL AND <lv_field> IS INITIAL.
+                ASSIGN COMPONENT c_y_sap_conf_table OF STRUCTURE <gs_alv> TO <lv_field>.
+                IF sy-subrc IS INITIAL.
+                  CASE <lv_field>.
+                    WHEN c_yppst_r1_conf1.
+                      ASSIGN COMPONENT ycl_ppst_tomis_i_prodconf=>c_meldung OF STRUCTURE <gs_alv> TO <lv_meldung>.
+                      IF sy-subrc IS INITIAL.
+                        READ TABLE gt_ds_tom_empty ASSIGNING FIELD-SYMBOL(<ls_ds_tom1>)
+                            WITH KEY y_id_meldung = <lv_meldung>.
+                        IF sy-subrc IS INITIAL AND <ls_ds_tom1>-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+                          ls_id_meld-low = <lv_meldung>.
+                          ls_id_meld-sign  = c_sign_i.
+                          ls_id_meld-option = c_option_eq.
+                          APPEND ls_id_meld TO lt_id_meld1_err.
+                          CLEAR ls_id_meld.
+                        ELSE.
+                          ls_id_meld-low = <lv_meldung>.
+                          ls_id_meld-sign  = c_sign_i.
+                          ls_id_meld-option = c_option_eq.
+                          APPEND ls_id_meld TO lt_id_meld1.
+                          CLEAR ls_id_meld.
+                        ENDIF.
+                      ENDIF.
+                    WHEN c_yppst_r1_conf2.
+                      ASSIGN COMPONENT ycl_ppst_tomis_i_prodconf=>c_meldung OF STRUCTURE <gs_alv> TO <lv_meldung>.
+                      IF sy-subrc IS INITIAL.
+                        READ TABLE gt_ds_tom_empty ASSIGNING <ls_ds_tom1>
+                            WITH KEY y_id_meldung = <lv_meldung>.
+                        IF sy-subrc IS INITIAL AND <ls_ds_tom1>-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+                          ls_id_meld-low = <lv_meldung>.
+                          ls_id_meld-sign  = c_sign_i.
+                          ls_id_meld-option = c_option_eq.
+                          APPEND ls_id_meld TO lt_id_meld2_err.
+                          CLEAR ls_id_meld.
+                        ELSE.
+                          ls_id_meld-low = <lv_meldung>.
+                          ls_id_meld-sign  = c_sign_i.
+                          ls_id_meld-option = c_option_eq.
+                          APPEND ls_id_meld TO lt_id_meld2.
+                          CLEAR ls_id_meld.
+                        ENDIF.
+                      ENDIF.
+                    WHEN c_yppst_r1_conf3.
+                      ASSIGN COMPONENT ycl_ppst_tomis_i_prodconf=>c_meldung OF STRUCTURE <gs_alv> TO <lv_meldung>.
+                      IF sy-subrc IS INITIAL.
+                        READ TABLE gt_ds_tom_empty ASSIGNING <ls_ds_tom1>
+                            WITH KEY y_id_meldung = <lv_meldung>.
+                        IF sy-subrc IS INITIAL AND <ls_ds_tom1>-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+                          ls_id_meld-low = <lv_meldung>.
+                          ls_id_meld-sign  = c_sign_i.
+                          ls_id_meld-option = c_option_eq.
+                          APPEND ls_id_meld TO lt_id_meld3_err.
+                          CLEAR ls_id_meld.
+                        ELSE.
+                          ls_id_meld-low = <lv_meldung>.
+                          ls_id_meld-sign  = c_sign_i.
+                          ls_id_meld-option = c_option_eq.
+                          APPEND ls_id_meld TO lt_id_meld3.
+                          CLEAR ls_id_meld.
+                        ENDIF.
+                      ENDIF.
+                    WHEN c_yppst_r1_conf4.
+                      ASSIGN COMPONENT ycl_ppst_tomis_i_prodconf=>c_meldung OF STRUCTURE <gs_alv> TO <lv_meldung>.
+                      IF sy-subrc IS INITIAL.
+                        READ TABLE gt_ds_tom_empty ASSIGNING <ls_ds_tom1>
+                            WITH KEY y_id_meldung = <lv_meldung>.
+                        IF sy-subrc IS INITIAL AND <ls_ds_tom1>-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+                          ls_id_meld-low = <lv_meldung>.
+                          ls_id_meld-sign  = c_sign_i.
+                          ls_id_meld-option = c_option_eq.
+                          APPEND ls_id_meld TO lt_id_meld4_err.
+                          CLEAR ls_id_meld.
+                        ELSE.
+                          ls_id_meld-low = <lv_meldung>.
+                          ls_id_meld-sign  = c_sign_i.
+                          ls_id_meld-option = c_option_eq.
+                          APPEND ls_id_meld TO lt_id_meld4.
+                          CLEAR ls_id_meld.
+                        ENDIF.
+                      ENDIF.
+                    WHEN c_yppst_r1_purslab.
+                      ASSIGN COMPONENT ycl_ppst_tomis_i_prodconf=>c_meldung OF STRUCTURE <gs_alv> TO <lv_meldung>.
+                      IF sy-subrc IS INITIAL.
+                        READ TABLE gt_r1_tomis ASSIGNING <ls_tomis> WITH KEY y_id_meldung = <lv_meldung> .
+                        IF sy-subrc IS INITIAL AND <ls_tomis> IS ASSIGNED.
+                          READ TABLE lt_pslbfil ASSIGNING FIELD-SYMBOL(<ls_pslbfil>)
+                            WITH KEY y_stahlwerk = <ls_tomis>-y_stahlwerk
+                                     y_erz_fertigungszustand = <ls_tomis>-y_erz_fertigungszustand.
+                          IF sy-subrc IS INITIAL AND <ls_pslbfil> IS ASSIGNED.
+                            CASE <ls_pslbfil>-y_prog_name.
+                              WHEN c_yppst_csa_slb_conf.
+                                READ TABLE gt_ds_tom_empty ASSIGNING <ls_ds_tom1>
+                                    WITH KEY y_id_meldung = <ls_tomis>-y_id_meldung.
+                                IF sy-subrc IS INITIAL AND <ls_ds_tom1>-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+                                  ls_id_meld-low = <lv_meldung>.
+                                  ls_id_meld-sign  = c_sign_i.
+                                  ls_id_meld-option = c_option_eq.
+                                  APPEND ls_id_meld TO lt_id_meld_csa_err.
+                                  CLEAR ls_id_meld.
+                                ELSE.
+                                  ls_id_meld-low = <lv_meldung>.
+                                  ls_id_meld-sign  = c_sign_i.
+                                  ls_id_meld-option = c_option_eq.
+                                  APPEND ls_id_meld TO lt_id_meld_csa.
+                                  CLEAR ls_id_meld.
+                                ENDIF.
+                              WHEN c_yppst_hkm_slab_conf.
+                                READ TABLE gt_ds_tom_empty ASSIGNING <ls_ds_tom1>
+                                    WITH KEY y_id_meldung = <ls_tomis>-y_id_meldung.
+                                IF sy-subrc IS INITIAL AND <ls_ds_tom1>-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+                                  ls_id_meld-low = <lv_meldung>.
+                                  ls_id_meld-sign  = c_sign_i.
+                                  ls_id_meld-option = c_option_eq.
+                                  APPEND ls_id_meld TO lt_id_meld_hkm_err.
+                                  CLEAR ls_id_meld.
+                                ELSE.
+                                  ls_id_meld-low = <lv_meldung>.
+                                  ls_id_meld-sign  = c_sign_i.
+                                  ls_id_meld-option = c_option_eq.
+                                  APPEND ls_id_meld TO lt_id_meld_hkm.
+                                  CLEAR ls_id_meld.
+                                ENDIF.
+                              WHEN OTHERS.
+                            ENDCASE.
+                          ENDIF.
+                        ENDIF.
+                      ENDIF.
+                    WHEN c_yppst_r1_batchup.
+                      ASSIGN COMPONENT ycl_ppst_tomis_i_prodconf=>c_meldung OF STRUCTURE <gs_alv> TO <lv_meldung>.
+                      IF sy-subrc IS INITIAL.
+                        ls_id_meld-low = <lv_meldung>.
+                        ls_id_meld-sign  = c_sign_i.
+                        ls_id_meld-option = c_option_eq.
+                        APPEND ls_id_meld TO  lt_id_meld6.
+                        CLEAR ls_id_meld.
+                      ENDIF.
+**BOC for CL#3
+                    WHEN c_yppst_r1_confz.
+                      ASSIGN COMPONENT ycl_ppst_tomis_i_prodconf=>c_meldung OF STRUCTURE <gs_alv> TO <lv_meldung>.
+                      IF sy-subrc IS INITIAL.
+                        READ TABLE gt_ds_tom_empty ASSIGNING <ls_ds_tom1>
+                            WITH KEY y_id_meldung = <lv_meldung>.
+                        IF sy-subrc IS INITIAL AND <ls_ds_tom1>-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+                          ls_id_meld-low = <lv_meldung>.
+                          ls_id_meld-sign  = c_sign_i.
+                          ls_id_meld-option = c_option_eq.
+                          APPEND ls_id_meld TO lt_id_meldz_err.
+                          CLEAR ls_id_meld.
+                        ELSE.
+                          ls_id_meld-low = <lv_meldung>.
+                          ls_id_meld-sign  = c_sign_i.
+                          ls_id_meld-option = c_option_eq.
+                          APPEND ls_id_meld TO lt_id_meldz.
+                          CLEAR ls_id_meld.
+                        ENDIF.
+                      ENDIF.
+**EOC for CL#3
+                    WHEN OTHERS.
+                      ASSIGN COMPONENT ycl_ppst_tomis_i_prodconf=>c_meldung OF STRUCTURE <gs_alv> TO <lv_meldung>.
+                      IF sy-subrc IS INITIAL.
+*                        lv_tomisid = <lv_meldung>.
+                        READ TABLE gt_r1_tomis ASSIGNING <ls_tomis> WITH KEY y_id_meldung = <lv_meldung>..
+                        IF sy-subrc IS INITIAL.
+                          READ TABLE lt_confmap ASSIGNING FIELD-SYMBOL(<ls_confmap>)
+                              WITH KEY y_satztyp = <ls_tomis>-y_satztyp
+                                       y_erz_aggregat_mts = <ls_tomis>-y_erz_aggregat_mts.
+                          IF sy-subrc IS INITIAL AND <ls_confmap> IS ASSIGNED.
+                            CASE <ls_tomis>-y_sap_conf_table.
+                              WHEN c_yppst_r1_conf1.
+                                READ TABLE gt_ds_tom_empty ASSIGNING <ls_ds_tom1>
+                                    WITH KEY y_id_meldung = <ls_tomis>-y_id_meldung.
+                                IF sy-subrc IS INITIAL AND <ls_ds_tom1>-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+                                  ls_id_meld-low = <lv_meldung>.
+                                  ls_id_meld-sign  = c_sign_i.
+                                  ls_id_meld-option = c_option_eq.
+                                  APPEND ls_id_meld TO lt_id_meld1_err.
+                                  CLEAR ls_id_meld.
+                                ELSE.
+                                  ls_id_meld-low = <lv_meldung>.
+                                  ls_id_meld-sign  = c_sign_i.
+                                  ls_id_meld-option = c_option_eq.
+                                  APPEND ls_id_meld TO lt_id_meld1.
+                                  CLEAR ls_id_meld.
+                                ENDIF.
+                              WHEN c_yppst_r1_conf2.
+                                READ TABLE gt_ds_tom_empty ASSIGNING <ls_ds_tom1>
+                                    WITH KEY y_id_meldung = <ls_tomis>-y_id_meldung.
+                                IF sy-subrc IS INITIAL AND <ls_ds_tom1>-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+                                  ls_id_meld-low = <lv_meldung>.
+                                  ls_id_meld-sign  = c_sign_i.
+                                  ls_id_meld-option = c_option_eq.
+                                  APPEND ls_id_meld TO lt_id_meld2_err.
+                                  CLEAR ls_id_meld.
+                                ELSE.
+                                  ls_id_meld-low = <lv_meldung>.
+                                  ls_id_meld-sign  = c_sign_i.
+                                  ls_id_meld-option = c_option_eq.
+                                  APPEND ls_id_meld TO lt_id_meld2.
+                                  CLEAR ls_id_meld.
+                                ENDIF.
+                              WHEN c_yppst_r1_conf3.
+                                READ TABLE gt_ds_tom_empty ASSIGNING <ls_ds_tom1>
+                                    WITH KEY y_id_meldung = <ls_tomis>-y_id_meldung.
+                                IF sy-subrc IS INITIAL AND <ls_ds_tom1>-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+                                  ls_id_meld-low = <lv_meldung>.
+                                  ls_id_meld-sign  = c_sign_i.
+                                  ls_id_meld-option = c_option_eq.
+                                  APPEND ls_id_meld TO lt_id_meld3_err.
+                                  CLEAR ls_id_meld.
+                                ELSE.
+                                  ls_id_meld-low = <lv_meldung>.
+                                  ls_id_meld-sign  = c_sign_i.
+                                  ls_id_meld-option = c_option_eq.
+                                  APPEND ls_id_meld TO lt_id_meld3.
+                                  CLEAR ls_id_meld.
+                                ENDIF.
+                              WHEN c_yppst_r1_conf4.
+                                READ TABLE gt_ds_tom_empty ASSIGNING <ls_ds_tom1>
+                                    WITH KEY y_id_meldung = <ls_tomis>-y_id_meldung.
+                                IF sy-subrc IS INITIAL AND <ls_ds_tom1>-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+                                  ls_id_meld-low = <lv_meldung>.
+                                  ls_id_meld-sign  = c_sign_i.
+                                  ls_id_meld-option = c_option_eq.
+                                  APPEND ls_id_meld TO lt_id_meld4_err.
+                                  CLEAR ls_id_meld.
+                                ELSE.
+                                  ls_id_meld-low = <lv_meldung>.
+                                  ls_id_meld-sign  = c_sign_i.
+                                  ls_id_meld-option = c_option_eq.
+                                  APPEND ls_id_meld TO lt_id_meld4.
+                                  CLEAR ls_id_meld.
+                                ENDIF.
+                              WHEN OTHERS.
+*                           This for the Slab case
+                                <ls_tomis>-y_satztyp = 'Z'.
+                                READ TABLE lt_pslbfil ASSIGNING <ls_pslbfil>
+                                  WITH KEY y_stahlwerk = <ls_tomis>-y_stahlwerk
+                                           y_erz_fertigungszustand = <ls_tomis>-y_erz_fertigungszustand.
+                                IF sy-subrc IS INITIAL AND <ls_pslbfil> IS ASSIGNED.
+                                  CASE <ls_pslbfil>-y_prog_name.
+                                    WHEN c_yppst_csa_slb_conf.
+                                      READ TABLE gt_ds_tom_empty ASSIGNING <ls_ds_tom1>
+                                          WITH KEY y_id_meldung = <ls_tomis>-y_id_meldung.
+                                      IF sy-subrc IS INITIAL AND <ls_ds_tom1>-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+                                        ls_id_meld-low = <lv_meldung>.
+                                        ls_id_meld-sign  = c_sign_i.
+                                        ls_id_meld-option = c_option_eq.
+                                        APPEND ls_id_meld TO lt_id_meld_csa_err.
+                                        CLEAR ls_id_meld.
+                                      ELSE.
+                                        ls_id_meld-low = <lv_meldung>.
+                                        ls_id_meld-sign  = c_sign_i.
+                                        ls_id_meld-option = c_option_eq.
+                                        APPEND ls_id_meld TO lt_id_meld_csa.
+                                        CLEAR ls_id_meld.
+                                      ENDIF.
+                                    WHEN c_yppst_hkm_slab_conf.
+                                      READ TABLE gt_ds_tom_empty ASSIGNING <ls_ds_tom1>
+                                          WITH KEY y_id_meldung = <ls_tomis>-y_id_meldung.
+                                      IF sy-subrc IS INITIAL AND <ls_ds_tom1>-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+                                        ls_id_meld-low = <lv_meldung>.
+                                        ls_id_meld-sign  = c_sign_i.
+                                        ls_id_meld-option = c_option_eq.
+                                        APPEND ls_id_meld TO lt_id_meld_hkm_err.
+                                        CLEAR ls_id_meld.
+                                      ELSE.
+                                        ls_id_meld-low = <lv_meldung>.
+                                        ls_id_meld-sign  = c_sign_i.
+                                        ls_id_meld-option = c_option_eq.
+                                        APPEND ls_id_meld TO lt_id_meld_hkm.
+                                        CLEAR ls_id_meld.
+                                      ENDIF.
+                                    WHEN OTHERS.
+**BOC for CL#3
+                                      READ TABLE gt_ds_tom_empty ASSIGNING <ls_ds_tom1>
+                                          WITH KEY y_id_meldung = <ls_tomis>-y_id_meldung.
+                                      IF sy-subrc IS INITIAL AND <ls_ds_tom1>-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+                                        ls_id_meld-low = <lv_meldung>.
+                                        ls_id_meld-sign  = c_sign_i.
+                                        ls_id_meld-option = c_option_eq.
+                                        APPEND ls_id_meld TO lt_id_meldz_err.
+                                        CLEAR ls_id_meld.
+                                      ELSE.
+                                        ls_id_meld-low = <lv_meldung>.
+                                        ls_id_meld-sign  = c_sign_i.
+                                        ls_id_meld-option = c_option_eq.
+                                        APPEND ls_id_meld TO lt_id_meldz.
+                                        CLEAR ls_id_meld.
+                                      ENDIF.
+**EOC for Cl#3
+                                  ENDCASE.
+                                ENDIF.
+*                         This is for the Batch Update case
+                                <ls_tomis>-y_satztyp = ycl_ppst_tomis_i_prodconf=>c_satztyp_a.
+                                ls_id_meld-low = <lv_meldung>.
+                                ls_id_meld-sign  = c_sign_i.
+                                ls_id_meld-option = c_option_eq.
+                                APPEND ls_id_meld TO  lt_id_meld6.
+                                CLEAR ls_id_meld.
+                            ENDCASE.
+                          ENDIF.
+                        ENDIF.
+                      ENDIF.
+                  ENDCASE.
+                ENDIF.
+              ENDIF.
+            ENDIF.
+          ENDLOOP.
+*   describe table and set counter
+          IF lt_id_meld1[] IS NOT INITIAL.
+            DESCRIBE TABLE lt_id_meld1 LINES lv_line.
+            IF lv_line IS NOT INITIAL.
+              lv_counter = lv_counter + 1.
+            ENDIF.
+            CLEAR lv_line.
+          ELSEIF lt_id_meld1_err[] IS NOT INITIAL.
+            DESCRIBE TABLE lt_id_meld1_err LINES lv_line.
+            IF lv_line IS NOT INITIAL.
+              lv_counter = lv_counter + 1.
+            ENDIF.
+            CLEAR lv_line.
+          ENDIF.
+
+          IF lt_id_meld2[] IS NOT INITIAL.
+            DESCRIBE TABLE lt_id_meld2 LINES lv_line.
+            IF lv_line IS NOT INITIAL.
+              lv_counter = lv_counter + 1.
+            ENDIF.
+            CLEAR lv_line.
+          ELSEIF lt_id_meld2_err[] IS NOT INITIAL.
+            DESCRIBE TABLE lt_id_meld2_err LINES lv_line.
+            IF lv_line IS NOT INITIAL.
+              lv_counter = lv_counter + 1.
+            ENDIF.
+            CLEAR lv_line.
+          ENDIF.
+
+          IF lt_id_meld3[] IS NOT INITIAL.
+            DESCRIBE TABLE lt_id_meld3 LINES lv_line.
+            IF lv_line IS NOT INITIAL.
+              lv_counter = lv_counter + 1.
+            ENDIF.
+            CLEAR lv_line.
+          ELSEIF lt_id_meld3_err[] IS NOT INITIAL.
+            DESCRIBE TABLE lt_id_meld3_err LINES lv_line.
+            IF lv_line IS NOT INITIAL.
+              lv_counter = lv_counter + 1.
+            ENDIF.
+            CLEAR lv_line.
+          ENDIF.
+
+          IF lt_id_meld4[] IS NOT INITIAL.
+            DESCRIBE TABLE lt_id_meld4 LINES lv_line.
+            IF lv_line IS NOT INITIAL.
+              lv_counter = lv_counter + 1.
+            ENDIF.
+            CLEAR lv_line.
+          ELSEIF lt_id_meld4_err[] IS NOT INITIAL.
+            DESCRIBE TABLE lt_id_meld4_err LINES lv_line.
+            IF lv_line IS NOT INITIAL.
+              lv_counter = lv_counter + 1.
+            ENDIF.
+            CLEAR lv_line.
+          ENDIF.
+
+          IF lt_id_meld_csa[] IS NOT INITIAL.
+            DESCRIBE TABLE lt_id_meld_csa LINES lv_line.
+            IF lv_line IS NOT INITIAL.
+              lv_counter = lv_counter + 1.
+            ENDIF.
+            CLEAR lv_line.
+          ELSEIF lt_id_meld_csa_err[] IS NOT INITIAL .
+            DESCRIBE TABLE lt_id_meld_csa_err LINES lv_line.
+            IF lv_line IS NOT INITIAL.
+              lv_counter = lv_counter + 1.
+            ENDIF.
+            CLEAR lv_line.
+          ELSEIF lt_id_meld_hkm[] IS NOT INITIAL.
+            DESCRIBE TABLE lt_id_meld_hkm LINES lv_line.
+            IF lv_line IS NOT INITIAL.
+              lv_counter = lv_counter + 1.
+            ENDIF.
+            CLEAR lv_line.
+          ELSEIF lt_id_meld_hkm_err[] IS NOT INITIAL.
+            DESCRIBE TABLE lt_id_meld_hkm_err LINES lv_line.
+            IF lv_line IS NOT INITIAL.
+              lv_counter = lv_counter + 1.
+            ENDIF.
+            CLEAR lv_line.
+          ENDIF.
+**BOC for CL#3
+          IF lt_id_meldz[] IS NOT INITIAL.
+            DESCRIBE TABLE lt_id_meldz LINES lv_line.
+            IF lv_line IS NOT INITIAL.
+              lv_counter = lv_counter + 1.
+            ENDIF.
+            CLEAR lv_line.
+          ELSEIF lt_id_meldz_err[] IS NOT INITIAL.
+            DESCRIBE TABLE lt_id_meldz_err LINES lv_line.
+            IF lv_line IS NOT INITIAL.
+              lv_counter = lv_counter + 1.
+            ENDIF.
+            CLEAR lv_line.
+          ENDIF.
+**EOC for CL#3
+          IF lt_id_meld6[] IS NOT INITIAL.
+            DESCRIBE TABLE lt_id_meld6 LINES lv_line.
+            IF lv_line IS NOT INITIAL.
+              lv_counter = lv_counter + 1.
+            ENDIF.
+          ENDIF.
+
+          IF lv_counter GT 1.
+* Pop up
+            CALL FUNCTION 'POPUP_TO_CONFIRM'
+              EXPORTING
+                text_question = TEXT-015
+              IMPORTING
+                answer        = lv_ans.
+          ELSEIF ( lt_id_meld1[] IS NOT INITIAL OR lt_id_meld1_err[] IS NOT INITIAL ).
+*         For Conf 1 program
+            IF lt_id_meld1[] IS NOT INITIAL.
+              SUBMIT yppst_casting_gwa_conf WITH s_meld IN lt_id_meld1[]
+                        VIA SELECTION-SCREEN AND RETURN.
+            ENDIF.
+            IF lt_id_meld1_err[] IS NOT INITIAL .
+              SUBMIT yppst_casting_gwa_conf WITH s_meld IN lt_id_meld1_err[]
+                                            WITH r_err  = abap_true
+                         VIA SELECTION-SCREEN AND RETURN.
+            ENDIF.
+
+          ELSEIF ( lt_id_meld2[] IS NOT INITIAL OR lt_id_meld2_err[] IS NOT INITIAL ).
+*         For Conf 2 program
+
+            IF lt_id_meld2[] IS NOT INITIAL.
+              SUBMIT yppst_adjusted_slab_conf WITH s_meld IN lt_id_meld2[]
+                        VIA SELECTION-SCREEN AND RETURN.
+            ENDIF.
+            IF lt_id_meld2_err[] IS NOT INITIAL.
+              SUBMIT yppst_adjusted_slab_conf WITH s_meld IN lt_id_meld2_err[]
+                                              WITH r_err  = abap_true
+                        VIA SELECTION-SCREEN AND RETURN.
+            ENDIF.
+
+          ELSEIF ( lt_id_meld3[] IS NOT INITIAL OR lt_id_meld3_err[] IS NOT INITIAL ).
+*         For Conf 3 program
+
+            IF lt_id_meld3[] IS NOT INITIAL.
+              SUBMIT yppst_hrds_conf WITH s_tomid IN lt_id_meld3[]
+                                VIA SELECTION-SCREEN AND RETURN.
+            ENDIF.
+
+            IF lt_id_meld3_err[] IS NOT INITIAL.
+              SUBMIT yppst_hrds_conf WITH s_tomid IN lt_id_meld3_err[]
+                                           WITH r_err  = abap_true
+                              VIA SELECTION-SCREEN AND RETURN.
+            ENDIF.
+
+          ELSEIF ( lt_id_meld4[] IS NOT INITIAL OR lt_id_meld4_err[] IS NOT INITIAL ).
+*         For Conf 4 program
+
+            IF lt_id_meld4[] IS NOT INITIAL.
+              SUBMIT yppst_heavyplate_conf WITH s_tomid IN lt_id_meld4[]
+                                VIA SELECTION-SCREEN AND RETURN.
+            ENDIF.
+
+            IF lt_id_meld4_err[] IS NOT INITIAL.
+              SUBMIT yppst_heavyplate_conf WITH s_tomid IN lt_id_meld4_err[]
+                                           WITH r_err  = abap_true
+                              VIA SELECTION-SCREEN AND RETURN.
+            ENDIF.
+
+          ELSEIF ( lt_id_meld_csa[] IS NOT INITIAL OR lt_id_meld_csa_err[] IS NOT INITIAL OR
+            lt_id_meld_hkm[] IS NOT INITIAL OR lt_id_meld_hkm_err[] IS NOT INITIAL ).
+*         For CSA program
+
+            IF lt_id_meld_csa[] IS NOT INITIAL.
+              SUBMIT yppst_csa_slb_conf WITH s_meldun IN lt_id_meld_csa[]
+                             VIA SELECTION-SCREEN AND RETURN.
+            ENDIF.
+
+            IF lt_id_meld_csa_err[] IS NOT INITIAL.
+              SUBMIT yppst_csa_slb_conf WITH s_meldun IN lt_id_meld_csa_err[]
+                                         WITH r_err  = abap_true
+                             VIA SELECTION-SCREEN AND RETURN.
+            ENDIF.
+
+*         For HKM program
+
+            IF lt_id_meld_hkm[] IS NOT INITIAL.
+              SUBMIT yppst_hkm_slab_conf WITH s_meld IN lt_id_meld_hkm[]
+                            VIA SELECTION-SCREEN AND RETURN.
+            ENDIF.
+
+
+            IF lt_id_meld_hkm_err[] IS NOT INITIAL.
+              SUBMIT yppst_hkm_slab_conf WITH s_meld IN lt_id_meld_hkm_err[]
+                                         WITH r_err  = abap_true
+                            VIA SELECTION-SCREEN AND RETURN.
+            ENDIF.
+
+          ELSEIF lt_id_meld6[] IS NOT INITIAL.
+*         For Batch program
+            SUBMIT yppst_batchupdate WITH s_meldun IN lt_id_meld6[] "#EC CI_SUBMIT
+                          VIA SELECTION-SCREEN AND RETURN.
+**BOC for CL#3
+*for confz program
+          ELSEIF ( lt_id_meldz[] IS NOT INITIAL OR lt_id_meldz_err[] IS NOT INITIAL ).
+            IF lt_id_meldz[] IS NOT INITIAL.
+              SUBMIT yppst_zmessage_conf WITH s_meld IN lt_id_meldz[]
+                                VIA SELECTION-SCREEN AND RETURN.
+            ENDIF.
+
+            IF lt_id_meldz_err[] IS NOT INITIAL.
+              SUBMIT yppst_zmessage_conf WITH s_meld IN lt_id_meldz_err[]
+                                           WITH r_err  = abap_true
+                              VIA SELECTION-SCREEN AND RETURN.
+            ENDIF.
+**EOC for CL#3
+          ENDIF.
+        ENDIF.
+
+        IF lt_rows[] IS NOT INITIAL..
+          select_display_alv( EXPORTING iv_user_flag = abap_true ).
+        ENDIF.
+
+      WHEN OTHERS.
+*     do nothing
+    ENDCASE.
+  ENDMETHOD.
+  METHOD update_table.
+** Description        :To modify database tables
+    DATA: lv_varkey TYPE rstable-varkey,
+          lv_tabixt TYPE sy-tabix.
+* Modify tomis table
+    CLEAR: lv_varkey,lv_tabixt.
+    lv_varkey = sy-mandt.
+    IF it_tomis[] IS NOT INITIAL.
+      lv_tabixt = 1.
+      WHILE lv_tabixt IS NOT INITIAL.
+        CALL FUNCTION 'ENQUEUE_E_TABLE'
+          EXPORTING
+            tabname        = c_yppst_r1_tomis
+            varkey         = lv_varkey
+          EXCEPTIONS
+            foreign_lock   = 1
+            system_failure = 2
+            OTHERS         = 3.
+        IF sy-subrc EQ 0.
+          CLEAR:lv_tabixt.
+          MODIFY yppst_r1_tomis FROM TABLE it_tomis.
+          IF sy-subrc IS INITIAL.
+            COMMIT WORK.
+            CALL FUNCTION 'DEQUEUE_E_TABLE'
+              EXPORTING
+                tabname = c_yppst_r1_tomis
+                varkey  = lv_varkey.
+          ENDIF.
+        ELSE.
+          lv_tabixt = sy-subrc.
+        ENDIF.
+      ENDWHILE.
+    ENDIF.
+
+* Modify Conf1 table
+    CLEAR: lv_varkey,lv_tabixt.
+    lv_varkey = sy-mandt.
+    IF it_conf1[] IS NOT INITIAL.
+      lv_tabixt = 1.
+      WHILE lv_tabixt IS NOT INITIAL.
+        CALL FUNCTION 'ENQUEUE_E_TABLE'
+          EXPORTING
+            tabname        = c_yppst_r1_conf1
+            varkey         = lv_varkey
+          EXCEPTIONS
+            foreign_lock   = 1
+            system_failure = 2
+            OTHERS         = 3.
+        IF sy-subrc EQ 0.
+          CLEAR:lv_tabixt.
+          MODIFY yppst_r1_conf1 FROM TABLE it_conf1.
+          IF sy-subrc IS INITIAL.
+            COMMIT WORK.
+            CALL FUNCTION 'DEQUEUE_E_TABLE'
+              EXPORTING
+                tabname = c_yppst_r1_conf1
+                varkey  = lv_varkey.
+          ENDIF.
+        ELSE.
+          lv_tabixt = sy-subrc.
+        ENDIF.
+      ENDWHILE.
+    ENDIF.
+
+* Modify Conf2 table
+    CLEAR: lv_varkey,lv_tabixt.
+    lv_varkey = sy-mandt.
+    IF it_conf2[] IS NOT INITIAL.
+      lv_tabixt = 1.
+      WHILE lv_tabixt IS NOT INITIAL.
+        CALL FUNCTION 'ENQUEUE_E_TABLE'
+          EXPORTING
+            tabname        = c_yppst_r1_conf2
+            varkey         = lv_varkey
+          EXCEPTIONS
+            foreign_lock   = 1
+            system_failure = 2
+            OTHERS         = 3.
+        IF sy-subrc EQ 0.
+          CLEAR:lv_tabixt.
+          MODIFY yppst_r1_conf2 FROM TABLE it_conf2.
+          IF sy-subrc IS INITIAL.
+            COMMIT WORK.
+            CALL FUNCTION 'DEQUEUE_E_TABLE'
+              EXPORTING
+                tabname = c_yppst_r1_conf2
+                varkey  = lv_varkey.
+          ENDIF.
+        ELSE.
+          lv_tabixt = sy-subrc.
+        ENDIF.
+      ENDWHILE.
+    ENDIF.
+
+* Modify conf3 table
+    CLEAR: lv_varkey,lv_tabixt.
+    lv_varkey = sy-mandt.
+    IF it_conf3[] IS NOT INITIAL.
+      lv_tabixt = 1.
+      WHILE lv_tabixt IS NOT INITIAL.
+        CALL FUNCTION 'ENQUEUE_E_TABLE'
+          EXPORTING
+            tabname        = c_yppst_r1_conf3
+            varkey         = lv_varkey
+          EXCEPTIONS
+            foreign_lock   = 1
+            system_failure = 2
+            OTHERS         = 3.
+        IF sy-subrc EQ 0.
+          CLEAR:lv_tabixt.
+          MODIFY yppst_r1_conf3 FROM TABLE it_conf3.
+          IF sy-subrc IS INITIAL.
+            COMMIT WORK.
+            CALL FUNCTION 'DEQUEUE_E_TABLE'
+              EXPORTING
+                tabname = c_yppst_r1_conf3
+                varkey  = lv_varkey.
+          ENDIF.
+        ELSE.
+          lv_tabixt = sy-subrc.
+        ENDIF.
+      ENDWHILE.
+    ENDIF.
+
+* Modify conf4 table
+    CLEAR: lv_varkey,lv_tabixt.
+    lv_varkey = sy-mandt.
+    IF it_conf4[] IS NOT INITIAL.
+      lv_tabixt = 1.
+      WHILE lv_tabixt IS NOT INITIAL.
+        CALL FUNCTION 'ENQUEUE_E_TABLE'
+          EXPORTING
+            tabname        = c_yppst_r1_conf4
+            varkey         = lv_varkey
+          EXCEPTIONS
+            foreign_lock   = 1
+            system_failure = 2
+            OTHERS         = 3.
+        IF sy-subrc EQ 0.
+          CLEAR:lv_tabixt.
+          MODIFY yppst_r1_conf4 FROM TABLE it_conf4.
+          IF sy-subrc IS INITIAL.
+            COMMIT WORK.
+            CALL FUNCTION 'DEQUEUE_E_TABLE'
+              EXPORTING
+                tabname = c_yppst_r1_conf4
+                varkey  = lv_varkey.
+          ENDIF.
+        ELSE.
+          lv_tabixt = sy-subrc.
+        ENDIF.
+      ENDWHILE.
+    ENDIF.
+
+* Modify slab table
+    CLEAR: lv_varkey,lv_tabixt.
+    lv_varkey = sy-mandt.
+    IF it_slab[] IS NOT INITIAL.
+      lv_tabixt = 1.
+      WHILE lv_tabixt IS NOT INITIAL.
+        CALL FUNCTION 'ENQUEUE_E_TABLE'
+          EXPORTING
+            tabname        = c_yppst_r1_purslab
+            varkey         = lv_varkey
+          EXCEPTIONS
+            foreign_lock   = 1
+            system_failure = 2
+            OTHERS         = 3.
+        IF sy-subrc EQ 0.
+          CLEAR:lv_tabixt.
+          MODIFY yppst_r1_purslab FROM TABLE it_slab.
+          IF sy-subrc IS INITIAL.
+            COMMIT WORK.
+            CALL FUNCTION 'DEQUEUE_E_TABLE'
+              EXPORTING
+                tabname = c_yppst_r1_purslab
+                varkey  = lv_varkey.
+          ENDIF.
+        ELSE.
+          lv_tabixt = sy-subrc.
+        ENDIF.
+      ENDWHILE.
+    ENDIF.
+
+* Modify Batch table
+    CLEAR: lv_varkey,lv_tabixt.
+    lv_varkey = sy-mandt.
+    IF it_batch[] IS NOT INITIAL.
+      lv_tabixt = 1.
+      WHILE lv_tabixt IS NOT INITIAL.
+        CALL FUNCTION 'ENQUEUE_E_TABLE'
+          EXPORTING
+            tabname        = c_yppst_r1_batchup
+            varkey         = lv_varkey
+          EXCEPTIONS
+            foreign_lock   = 1
+            system_failure = 2
+            OTHERS         = 3.
+        IF sy-subrc EQ 0.
+          CLEAR:lv_tabixt.
+          MODIFY yppst_r1_batchup FROM TABLE it_batch.
+          IF sy-subrc IS INITIAL.
+            COMMIT WORK.
+            CALL FUNCTION 'DEQUEUE_E_TABLE'
+              EXPORTING
+                tabname = c_yppst_r1_batchup
+                varkey  = lv_varkey.
+          ENDIF.
+        ELSE.
+          lv_tabixt = sy-subrc.
+        ENDIF.
+      ENDWHILE.
+    ENDIF.
+  ENDMETHOD.
+ENDCLASS.               "lcl_tree_event_receiver

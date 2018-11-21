@@ -1,0 +1,267 @@
+*&---------------------------------------------------------------------*
+*&  Include           YPPST_BATCHUP_CLDEF
+*&---------------------------------------------------------------------*
+
+CLASS lcl_batch_data DEFINITION FINAL.
+
+  PUBLIC SECTION.
+*&---------------------------------------------------------------------*
+*&  Event
+*&---------------------------------------------------------------------*
+    EVENTS trigger_msg EXPORTING VALUE(iv_msgtype) TYPE bapi_mtype
+                               VALUE(iv_id)      TYPE symsgid  OPTIONAL
+                               VALUE(iv_number)  TYPE symsgno  OPTIONAL
+                               VALUE(iv_msgv1)   TYPE symsgv OPTIONAL
+                               VALUE(iv_msgv2)   TYPE symsgv OPTIONAL
+                               VALUE(iv_msgv3)   TYPE symsgv OPTIONAL
+                               VALUE(iv_msgv4)   TYPE symsgv OPTIONAL.
+*&---------------------------------------------------------------------*
+*&  Types
+*&---------------------------------------------------------------------*
+*MSKA
+    TYPES: BEGIN OF ts_mska,
+             matnr TYPE matnr,
+             werks TYPE werks_d,
+             lgort TYPE lgort_d,
+             charg TYPE charg_d,
+             vbeln TYPE vbeln,
+             posnr TYPE posnr,
+             kalab TYPE labst,
+           END OF ts_mska,
+**BOC for CL#14
+           BEGIN OF t_messages,
+             arbgb(20) TYPE c,
+             msgty(1)  TYPE c,
+             msgnr(3)  TYPE c,
+             text(130) TYPE c,
+           END OF t_messages.
+**EOC for CL#14
+
+
+    CLASS-DATA: gv_satzty       TYPE yppst_r1_tomis-y_satztyp,
+                gv_vorgan       TYPE yppst_r1_tomis-y_vorgang,
+                gv_y_id_meldung TYPE yppst_r1_tomis-y_id_meldung,
+                gv_ident        TYPE yppst_r1_erz_tks_ident,
+                gv_fls_ident    TYPE yppst_r1_fls_ident,
+                gv_batch        TYPE yppst_r1_sap_batch_no,
+                gv_date         TYPE yppst_r1_bestandstag,
+*BOC for CL#8
+                gv_clust        TYPE yppst_r1_clstno.
+*EOC for CL#8
+
+    TYPES:tt_y_satztyp    TYPE RANGE OF yppst_r1_tomis-y_satztyp,
+          tt_y_vorgang    TYPE RANGE OF yppst_r1_tomis-y_vorgang,
+          tt_y_id_meldung TYPE RANGE OF yppst_r1_tomis-y_id_meldung,
+*          tt_y_msc2_flag       TYPE RANGE OF char1,
+*          tt_y_scrap_decl_flag TYPE RANGE OF char1,
+          tt_r1_batchup   TYPE STANDARD TABLE OF yppst_r1_batchup,
+          tt_tks_ident    TYPE RANGE OF yppst_r1_erz_tks_ident,
+          tt_fls_ident    TYPE RANGE OF yppst_r1_fls_ident,
+          tt_batch        TYPE RANGE OF yppst_r1_sap_batch_no,
+          tt_date         TYPE RANGE OF yppst_r1_bestandstag,
+*BOC for CL#8
+          tt_clust        TYPE RANGE OF yppst_r1_clstno.
+*EOC for CL#8
+
+*&---------------------------------------------------------------------*
+*&  Global Internal Tables
+*&---------------------------------------------------------------------*
+    DATA: gt_r1_batchup   TYPE STANDARD TABLE OF yppst_r1_batchup,
+          gt_r1_tomis     TYPE SORTED TABLE OF yppst_r1_tomis WITH NON-UNIQUE KEY y_vorgang y_satztyp,
+          gt_mska         TYPE STANDARD TABLE OF ts_mska,
+          gs_r1_batchup   TYPE yppst_r1_batchup,
+          gt_satztyp      TYPE tt_y_satztyp,
+          gt_y_vorgang    TYPE tt_y_vorgang,
+          gt_y_id_meldung TYPE tt_y_id_meldung,
+          gt_tks_ident    TYPE tt_tks_ident,
+          gt_fls_ident    TYPE tt_fls_ident,
+          gt_batch        TYPE tt_batch,
+          gt_date         TYPE tt_date,
+*          gt_y_msc2_flag       TYPE tt_y_msc2_flag,
+*          gt_y_scrap_decl_flag TYPE tt_y_scrap_decl_flag,
+          gt_wcmap        TYPE SORTED TABLE OF yppst_r1_wcmap WITH UNIQUE KEY y_erz_aggregat_mts y_sap_work_center,
+          gt_bdcdata      TYPE bdcdata_tab,
+          gt_comp         TYPE cl_abap_structdescr=>component_table,
+          gt_ref          TYPE STANDARD TABLE OF salv_s_ddic_reference,
+*BOC for CL#8
+          gt_clust        TYPE tt_clust,
+*EOC for CL#8
+**BOC for CL#20
+          gt_errlog       TYPE STANDARD TABLE OF yppst_r1_errlog,
+          gt_errlog_del   TYPE STANDARD TABLE OF yppst_r1_errlog,
+**EOC for CL#20
+**BOC of CL#25
+          gt_charmap      TYPE SORTED TABLE OF yppst_r1_charmap WITH UNIQUE KEY y_satztyp y_flg_verbund y_data_source y_sap_field.
+**EOC of CL#25
+*&---------------------------------------------------------------------*
+*&  Global Variables
+*&---------------------------------------------------------------------*
+    DATA: gv_data_check  TYPE checkbox,
+          gv_batch_check TYPE checkbox,
+          gv_scrap       TYPE checkbox,
+          gv_co11_flag   TYPE char1,
+          gv_process     TYPE mode,
+          gv_msg         TYPE string,
+          gv_low         TYPE rvari_val_255,
+          gv_msgv1       TYPE symsgv,
+          gv_call        TYPE char1.
+*          gv_repid       TYPE syrepid.
+
+*&---------------------------------------------------------------------*
+*&  Constants
+*&---------------------------------------------------------------------*
+    CONSTANTS: c_quality_level      TYPE rvari_vnam       VALUE 'R1PP_QUALITY_LEVEL',
+               c_rework_prd_ord_typ TYPE rvari_vnam       VALUE 'R1PP_REWORK_PRD_ORD_TYP',
+               c_r1pp_scrap_mat_num TYPE rvari_vnam       VALUE 'R1PP_SCRAP_MAT_NUM',
+               c_23                 TYPE char2            VALUE '23',
+               c_1                  TYPE yppst_r1_po1_qty VALUE '1',
+               c_531                TYPE bwart            VALUE '531',
+               c_msg_ru             TYPE symsgid          VALUE 'RU',
+               c_num_110            TYPE sy-msgno         VALUE '110',
+               c_num_210            TYPE sy-msgno         VALUE '210',
+               c_num_044            TYPE sy-msgno         VALUE '044',
+*               c_num_521            TYPE sy-msgno         VALUE '521',
+               c_num_010            TYPE sy-msgno         VALUE '010',
+*               c_msg_cls_eu         TYPE arbgb            VALUE 'EU',
+               c_num_217            TYPE sy-msgno         VALUE '217',
+               c_msg_i              TYPE sy-msgty         VALUE 'I',
+               c_tcode              TYPE syst_tcode       VALUE 'YPPST_BATCHUPDATE',
+               c_yppst_r1_tomis     TYPE tabname          VALUE 'YPPST_R1_TOMIS',
+               c_yppst_r1_batchup   TYPE tabname          VALUE 'YPPST_R1_BATCHUP',
+               c_spl_stk            TYPE sobkz            VALUE 'E',
+**BOC for CL#23
+*               c_mvnt_413           TYPE bwart            VALUE '413',
+               c_mvnt_309           TYPE bwart            VALUE '309',
+**EOC for CL#23
+               c_gm_code            TYPE bapi2017_gm_code VALUE '04',
+**BOC for CL#19
+               c_s                  TYPE char1            VALUE 'S',
+**EOC for CL#19
+**BOC for CL#20
+               c_terr               TYPE tabname           VALUE 'YPPST_R1_ERRLOG',
+**EOC for CL#20
+**BOC for Cl#21
+               c_num_172            TYPE sy-msgno         VALUE '172',
+               c_msg_00             TYPE symsgid          VALUE '00',
+**EOC for CL#21
+**BOC for CL#25
+               c_ct                 TYPE yppst_r1_data_source    VALUE 'CT',
+               c_a                  TYPE yppst_r1_tomis-y_satztyp VALUE 'A',
+               c_matnr              TYPE matnr           VALUE '000000001930025040'.
+**EOC for CL#25
+
+*&---------------------------------------------------------------------*
+*&  Methods
+*&---------------------------------------------------------------------*
+    METHODS:             constructor IMPORTING it_satztyp      TYPE tt_y_satztyp
+                                               it_y_vorgang    TYPE tt_y_vorgang
+                                               it_y_id_meldung TYPE tt_y_id_meldung
+                                               it_tks_ident    TYPE tt_tks_ident
+                                               it_fls_ident    TYPE tt_fls_ident
+                                               it_batch        TYPE tt_batch
+                                               it_date         TYPE tt_date
+                                               iv_data_check   TYPE checkbox
+                                               iv_batch_check  TYPE checkbox
+                                               iv_scrap        TYPE checkbox
+                                               iv_process      TYPE mode
+*BOC for CL#8
+                                               it_clust        TYPE tt_clust,
+*EOC for CL#8
+*                                   iv_call         TYPE char1,
+      run.
+
+*&---------------------------------------------------------------------*
+*& Private section
+*&---------------------------------------------------------------------*
+
+  PRIVATE SECTION.
+    METHODS:
+***validate input
+      validate_input,
+*** Check Authorization
+      check_auth IMPORTING iv_tcode TYPE tcode,
+*** Fetch data from Tomis
+      get_data,
+*** Data conversion and batch table update
+      update_batch_table,
+*** To updated the batch char
+      update_batch_char,
+* Goods Movement create
+      create_goodsmvt IMPORTING iv_matnr       TYPE matnr
+                                iv_werks       TYPE werks_d
+                                iv_lgort       TYPE lgort_d
+                                iv_charg       TYPE charg_d
+                                iv_pst_dt      TYPE budat
+                                iv_ent_qty     TYPE yppst_r1_po1_qty
+                                iv_sal_ord     TYPE yppst_r1_sap_so1
+                                iv_sal_itm     TYPE yppst_r1_sap_soitem1
+                                iv_val_sal_ord TYPE yppst_r1_sap_so1
+                                iv_val_sal_itm TYPE yppst_r1_sap_soitem1
+                      EXPORTING ev_allc_err    TYPE yppst_r1_po1_alloc_flag
+                                ev_err_msg     TYPE yppst_r1_error_message,
+*** to create the re-work production order
+      rework_prod_order IMPORTING it_r1_batchup TYPE tt_r1_batchup,
+      bdc_co11
+        IMPORTING
+                  is_r1_batchup TYPE yppst_r1_batchup
+                  iv_aufnr      TYPE aufnr
+                  iv_quantity   TYPE yppst_r1_po1_qty
+                  iv_low_mat    TYPE rvari_val_255
+        EXPORTING ev_co11_flag  TYPE char1
+                  ev_msg        TYPE string,
+
+      fill_bdc IMPORTING iv_program  TYPE bdc_prog OPTIONAL
+                         iv_dynpro   TYPE bdc_dynr OPTIONAL
+                         iv_dynbegin TYPE bdc_start OPTIONAL
+                         iv_fnam     TYPE fnam_____4 OPTIONAL
+                         iv_fval     TYPE any  OPTIONAL,
+* display data in ALV
+*      display_data CHANGING xt_table TYPE data,     "tt_err_alv,
+
+* Creation of prod oder for rework
+      create_prod_order_rework IMPORTING iv_werks       TYPE werks_d
+                                         iv_ord_type    TYPE aufart
+                                         iv_sales_order TYPE yppst_r1_sap_so1
+                                         iv_so_item     TYPE yppst_r1_sap_soitem1
+                                         iv_sap_kmat    TYPE yppst_r1_sap_kmat
+                                         iv_gewicht     TYPE yppst_r1_po1_qty
+                                         iv_arbpl       TYPE arbpl
+                                         iv_process     TYPE mode
+                               EXPORTING ev_aufnr       TYPE aufnr
+                                         ev_co01        TYPE yppst_r1_po1_co01_flag
+*                                         ev_co02        TYPE yppst_r1_po1_co02_flag
+                                         ev_err_msg     TYPE yppst_r1_error_message,
+*   to fill the alv structure
+      fill_alv   IMPORTING is_tomis TYPE yppst_r1_tomis OPTIONAL
+                           is_conf  TYPE yppst_r1_batchup OPTIONAL,
+
+**BOC for CL#20
+*   To Update the error log
+      error_log   IMPORTING is_tomis TYPE yppst_r1_tomis OPTIONAL
+                            is_conf  TYPE yppst_r1_batchup OPTIONAL
+                            iv_del   TYPE char1,
+**EOC for CL#20
+**BOC for CL#25
+* Batch Characterisitc update
+      batch_char     IMPORTING is_batch      TYPE yppst_r1_batchup
+                     EXPORTING et_char_batch TYPE clbatch_t.
+**EOC for 25
+ENDCLASS.
+
+CLASS lcl_msg_handling DEFINITION FINAL.
+  PUBLIC SECTION.
+
+    METHODS: display_msg FOR EVENT trigger_msg OF lcl_batch_data
+      IMPORTING iv_msgtype
+                  iv_id
+                  iv_number
+                  iv_msgv1
+                  iv_msgv2
+                  iv_msgv3
+                  iv_msgv4.
+
+  PRIVATE SECTION.
+
+ENDCLASS.
+FIELD-SYMBOLS: <gt_alv> TYPE STANDARD TABLE,
+               <gs_alv> TYPE any.

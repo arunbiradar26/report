@@ -1,0 +1,470 @@
+*&---------------------------------------------------------------------*
+*&  Include           YPPST_DS_ERROR_CLDEF
+*&---------------------------------------------------------------------*
+**************ThyssenKrupp BASE- SAP Program Header*********************
+*
+*
+*  Name:  E_SCM-PP_0077 - Downstream Error Handling Cockpit
+*
+*  Application: Enhancement
+*  Module Team: SCM-PP
+*
+*
+*
+*  CR-ID: E_SCM-PP_0077
+*  Transport-ID: BE1K928970
+*  Requester: Andreas K
+*
+*  Programmer: Arun Biradar/ Subhash M
+*
+*
+*  Short description: To enable central monitoring and correction of errors
+*  that appear in SAP ECC related to the TOMIS Interface and the processing
+*    of Downstream data.
+************************************************************************
+**************ThyssenKrupp BASE - SAP Change Log************************
+*
+*
+*  CR-ID:         E_SCM-PP_0077
+*  Transport-ID:
+*  Requester:     <name of the requester>
+*  Programmer:    <name of the programmer>
+*
+*
+*  Version:       V1.0         Date:
+*
+*  Short description
+*
+***************************************************************************
+
+TYPES: tt_ref          TYPE STANDARD TABLE OF salv_s_ddic_reference,
+       tt_meldung      TYPE RANGE OF yppst_r1_id_meldung,
+       tt_tomis_header TYPE STANDARD TABLE OF yppst_r1_tomis_header WITH DEFAULT KEY,
+       tt_tomis        TYPE STANDARD TABLE OF yppst_r1_tomis,
+       tt_conf1        TYPE STANDARD TABLE OF yppst_r1_conf1,
+       tt_conf2        TYPE STANDARD TABLE OF yppst_r1_conf2,
+       tt_conf3        TYPE STANDARD TABLE OF yppst_r1_conf3,
+       tt_conf4        TYPE STANDARD TABLE OF yppst_r1_conf4,
+       tt_slab         TYPE STANDARD TABLE OF yppst_r1_purslab,
+       tt_batch        TYPE STANDARD TABLE OF yppst_r1_batchup,
+**BOC for CL#3
+       tt_confz        TYPE STANDARD TABLE OF yppst_r1_confz,
+**EOC for CL#3
+**BOC for CL#2
+       BEGIN OF ts_sap_conf_table,
+         y_id_meldung TYPE yppst_r1_id_meldung,
+         y_date       TYPE yppst_r1_bestandstag,
+         y_conf_table TYPE yppst_r1_sap_conf_table,
+         y_flag       TYPE char1,
+       END OF ts_sap_conf_table.
+**EOC for CL#2
+
+DATA: go_cust            TYPE REF TO cl_gui_custom_container,
+      go_splitter        TYPE REF TO cl_gui_splitter_container,
+      go_graphic_parent1 TYPE REF TO cl_gui_container,
+      go_graphic_parent2 TYPE REF TO cl_gui_container,
+      go_tree            TYPE REF TO cl_gui_alv_tree,
+      go_grid_right      TYPE REF TO cl_salv_table,
+      gs_key             TYPE salv_s_layout_key,
+      go_layout          TYPE REF TO cl_salv_layout,
+      gt_fieldcatalog    TYPE lvc_t_fcat,
+      gt_ds_tom          TYPE STANDARD TABLE OF yppstcds_ds_tomis_err,
+      gt_ds_tom1         TYPE STANDARD TABLE OF yppst_r1_tomis_header,
+      gt_ds_tom_empty    TYPE STANDARD TABLE OF yppst_r1_tomis_header,
+      gt_r1_tomis        TYPE STANDARD TABLE OF yppst_r1_tomis,
+      gt_ref             TYPE STANDARD TABLE OF salv_s_ddic_reference,
+      gt_comp            TYPE cl_abap_structdescr=>component_table,
+      gv_msg_text        TYPE symsgv,
+      gv_flag            TYPE char1,
+      gv_tabix           TYPE sy-tabix,
+      gv_user_flag       TYPE char1,
+      go_selections      TYPE REF TO cl_salv_selections,
+      gv_layout          TYPE slis_vari,
+**BOC for CL#2
+      gt_conf_table      TYPE STANDARD TABLE OF ts_sap_conf_table,
+      gs_conf_table      TYPE ts_sap_conf_table,
+      gv_sucess1         TYPE checkbox,         "##NEEDED
+      gv_error1          TYPE checkbox,         "##NEEDED
+      gv_not_process1    TYPE checkbox,         "##NEEDED
+**EOC for CL#2
+**BOC for CL#4
+      gt_errlog          TYPE SORTED TABLE OF yppst_r1_errlog WITH UNIQUE KEY y_id_meldung y_vorgang y_erz_tks_ident.
+**EOC for CL#4
+
+
+FIELD-SYMBOLS: <gt_alv> TYPE STANDARD TABLE,
+               <gs_alv> TYPE any.
+
+RANGES: gt_werks          FOR yppst_r1_conf1-werks.
+
+CONSTANTS: c_back                  TYPE sy-ucomm VALUE 'BACK',
+           c_exit                  TYPE sy-ucomm VALUE 'EXIT',
+           c_cancel                TYPE sy-ucomm VALUE 'CANCEL',
+           c_ans_1                 TYPE char1    VALUE '1',
+           c_mat                   TYPE char3    VALUE 'MAT',      " Material Number
+           c_bes                   TYPE char3    VALUE 'BES',
+           c_agr                   TYPE char3    VALUE 'AGR',
+           c_wrk                   TYPE char3    VALUE 'WRK',      " Plant
+           c_aun                   TYPE char3    VALUE 'AUN',     "Sales Document
+           c_anr                   TYPE char3    VALUE 'ANR',     " Order Number
+           c_cha                   TYPE char3    VALUE 'CHA',     " Batch Number
+           c_para1                 TYPE tpara-paramid VALUE 'ZZPPSE_IDMELDUNG',
+           c_para2                 TYPE tpara-paramid VALUE 'ZZPPSE_VORGANG',
+           c_yellow                TYPE char1     VALUE '2',
+           c_y_so2_lastrec         TYPE fieldname VALUE 'Y_SO2_LASTREC',
+           c_y_terminated          TYPE fieldname VALUE 'Y_TERMINATED',
+           c_num_044               TYPE sy-msgno  VALUE '044',
+           c_y_sap_batch_no        TYPE char30    VALUE 'Y_SAP_BATCH_NO',
+           c_y_sap_kmat            TYPE char30    VALUE 'Y_SAP_KMAT',
+           c_y_po1                 TYPE char30    VALUE 'Y_PO1',
+           c_y_po2                 TYPE char30    VALUE 'Y_PO2',
+           c_y_po3                 TYPE char30    VALUE 'Y_PO3',
+           c_y_po4                 TYPE char30    VALUE 'Y_PO4',
+           c_y_po5                 TYPE char30    VALUE 'Y_PO5',
+           c_y_po                  TYPE char30    VALUE 'Y_PO',
+           c_y_sap_so              TYPE char30    VALUE 'Y_SAP_SO',
+           c_y_sap_so1             TYPE char30    VALUE 'Y_SAP_SO1',
+           c_y_sap_so2             TYPE char30    VALUE 'Y_SAP_SO2',
+           c_y_sap_so3             TYPE char30    VALUE 'Y_SAP_SO3',
+           c_y_sap_so4             TYPE char30    VALUE 'Y_SAP_SO4',
+           c_y_sap_so5             TYPE char30    VALUE 'Y_SAP_SO5',
+           c_ebeln                 TYPE char30    VALUE 'EBELN',
+           c_werks                 TYPE char30    VALUE 'WERKS',
+           c_y_sap_work_center     TYPE char30    VALUE 'Y_SAP_WORK_CENTER',
+           c_sign_i                TYPE char1     VALUE 'I',
+           c_option_eq             TYPE char2     VALUE 'EQ',
+           c_tcode                 TYPE syst_tcode VALUE 'YPPST_R1_DS_ERROR',
+           c_yppst_r1_tomis        TYPE char30    VALUE 'YPPST_R1_TOMIS',
+           c_yppst_r1_conf1        TYPE char30    VALUE 'YPPST_R1_CONF1',
+           c_yppst_r1_conf2        TYPE char30    VALUE 'YPPST_R1_CONF2',
+           c_yppst_r1_conf3        TYPE char30    VALUE 'YPPST_R1_CONF3',
+           c_yppst_r1_conf4        TYPE char30    VALUE 'YPPST_R1_CONF4',
+           c_yppst_r1_purslab      TYPE char30    VALUE 'YPPST_R1_PURSLAB',
+           c_yppst_r1_batchup      TYPE char30    VALUE 'YPPST_R1_BATCHUP',
+**BOC for CL#3
+           c_yppst_r1_confz        TYPE char30    VALUE 'YPPST_R1_CONFZ',
+**EOCfor CL#3
+           c_y_sap_conf_table      TYPE char30    VALUE 'Y_SAP_CONF_TABLE',
+           c_yppst_csa_slb_conf    TYPE programm VALUE 'YPPST_CSA_SLB_CONF',
+           c_yppst_hkm_slab_conf   TYPE programm VALUE 'YPPST_HKM_SLAB_CONF',
+           c_myfunction            TYPE salv_de_function VALUE 'MYFUNCTION',
+           c_myfunction1           TYPE salv_de_function VALUE 'MYFUNCTION1',
+           c_myfunction2           TYPE salv_de_function VALUE 'MYFUNCTION2',
+           c_3p                    TYPE tv_image  VALUE '@3P@',
+           c_3y                    TYPE tv_image  VALUE '@3Y@',
+           c_open                  TYPE char1     VALUE '(',
+           c_close                 TYPE char1     VALUE ')',
+           c_y_bestandstag         TYPE lvc_fname VALUE 'Y_BESTANDSTAG',
+           c_y_conf_flag           TYPE lvc_fname VALUE 'Y_CONF_FLAG',
+           c_y_id_meldung          TYPE lvc_fname VALUE 'Y_ID_MELDUNG',
+           c_y_vorgang             TYPE lvc_fname VALUE 'Y_VORGANG',
+           c_yppst_r1_tomis_header TYPE tabname VALUE 'YPPST_R1_TOMIS_HEADER',
+           c_n                     TYPE char1  VALUE 'N',
+           c_d                     TYPE char1  VALUE 'D',
+           c_p                     TYPE char1  VALUE 'P',
+           c_c                     TYPE char1  VALUE 'C',
+           c_t                     TYPE char1  VALUE 'T',
+           c_x                     TYPE char1  VALUE 'X',
+           c_tomis_tree            TYPE string VALUE 'TOMIS_TREE',
+           c_mm03                  TYPE syst_tcode VALUE 'MM03',
+           c_msc3n                 TYPE syst_tcode VALUE 'MSC3N',
+           c_co03                  TYPE syst_tcode VALUE 'CO03',
+           c_va03                  TYPE syst_tcode VALUE 'VA03',
+           c_me23n                 TYPE syst_tcode VALUE 'ME23N',
+           c_cr03                  TYPE syst_tcode VALUE 'CR03',
+           c_zppse_check           TYPE syst_tcode VALUE 'ZPPSE_CHECK',
+           c_yppst_ds_map_tables   TYPE syst_tcode VALUE 'YPPST_DS_MAP_TABLES',
+           c_yppst_ds_cust_tables  TYPE syst_tcode VALUE 'YPPST_DS_CUST_TABLES',
+           c_yppst_test_qppd_fm    TYPE syst_tcode VALUE 'YPPST_TEST_QPPD_FM',
+           c_ypqst_show_so_fvers   TYPE syst_tcode VALUE 'YPQST_SHOW_SO_FVERS',
+           c_a                     TYPE char01 VALUE 'A',
+           c_alv_background        TYPE sdydo_key VALUE 'ALV_BACKGROUND',
+           c_msg_i                 TYPE sy-msgty             VALUE 'I',
+           c_num_001               TYPE sy-msgno             VALUE '001',
+**BOC for CL#1
+           c_y_sap_input_material1 TYPE char30 VALUE 'Y_SAP_INPUT_MATERIAL1',
+           c_y_sap_input_material2 TYPE char30 VALUE 'Y_SAP_INPUT_MATERIAL2',
+           c_y_sap_input_material3 TYPE char30 VALUE 'Y_SAP_INPUT_MATERIAL3',
+           c_y_sap_input_material4 TYPE char30 VALUE 'Y_SAP_INPUT_MATERIAL4',
+           c_y_sap_input_material5 TYPE char30 VALUE 'Y_SAP_INPUT_MATERIAL5',
+           c_y_input_batch1        TYPE char30 VALUE 'Y_INPUT_BATCH1',
+           c_y_input_batch2        TYPE char30 VALUE 'Y_INPUT_BATCH2',
+           c_y_input_batch3        TYPE char30 VALUE 'Y_INPUT_BATCH3',
+           c_y_input_batch4        TYPE char30 VALUE 'Y_INPUT_BATCH4',
+           c_y_input_batch5        TYPE char30 VALUE 'Y_INPUT_BATCH5',
+**EOC for CL#1
+**BOC for CL#2
+           c_fo                    TYPE tv_image  VALUE '@FO@'.
+**EOC for CL#2
+
+
+CONSTANTS: c_maptb TYPE sy-ucomm VALUE '&MAP',
+           c_custb TYPE sy-ucomm VALUE '&CUST',
+           c_func  TYPE sy-ucomm VALUE '&FUNC',
+           c_d23f  TYPE sy-ucomm VALUE '&D23',
+           c_ppse  TYPE sy-ucomm VALUE '&PPSE',
+           c_qppd  TYPE sy-ucomm VALUE '&QPPD'.
+
+CLASS lcl_ds_error DEFINITION FINAL.
+
+  PUBLIC SECTION.
+*&---------------------------------------------------------------------*
+*&  Event
+*&---------------------------------------------------------------------*
+    EVENTS trigger_msg EXPORTING VALUE(iv_msgtype) TYPE bapi_mtype
+                                VALUE(iv_id)      TYPE symsgid  OPTIONAL
+                                VALUE(iv_number)  TYPE symsgno  OPTIONAL
+                                VALUE(iv_msgv1)   TYPE symsgv OPTIONAL
+                                VALUE(iv_msgv2)   TYPE symsgv OPTIONAL
+                                VALUE(iv_msgv3)   TYPE symsgv OPTIONAL
+                                VALUE(iv_msgv4)   TYPE symsgv OPTIONAL.
+*&---------------------------------------------------------------------*
+*&  Class Data
+*&---------------------------------------------------------------------*
+    CLASS-DATA: gv_id_meldung       TYPE yppst_r1_tomis-y_id_meldung,
+                gv_date             TYPE yppst_r1_bestandstag,
+                gv_date_time        TYPE yppst_r1_erz_ereigniszeitpunkt,
+                gv_workcenter       TYPE yppst_r1_erz_aggregat_mts,
+                gv_pss_id           TYPE yppst_r1_erz_tks_ident,
+                gv_fls_ident        TYPE yppst_r1_fls_ident,
+                gv_fls_loc          TYPE yppst_r1_fls_standort,
+                gv_fapo             TYPE yppst_r1_erz_auftragsnummer1,
+                gv_fapo_item        TYPE yppst_r1_erz_auftragsposition1,
+                gv_heat_no          TYPE yppst_r1_chargen_nr,
+                gv_conf_flag        TYPE yppst_r1_process_flag,
+                gv_terr             TYPE yppst_r1_terminated,
+**BOC for CL#4
+                gv_y_sap_conf_table TYPE yppst_r1_sap_conf_table.
+**EOC for CL#4
+*                gv_max_no     TYPE syst_tabix.
+
+*&---------------------------------------------------------------------*
+*&  Types
+*&---------------------------------------------------------------------*
+    TYPES: tt_id_meldung     TYPE RANGE OF yppst_r1_tomis-y_id_meldung,
+           tt_date           TYPE RANGE OF yppst_r1_bestandstag,
+           tt_date_time      TYPE RANGE OF yppst_r1_erz_ereigniszeitpunkt,
+           tt_workcenter     TYPE RANGE OF yppst_r1_erz_aggregat_mts,
+           tt_pss_id         TYPE RANGE OF yppst_r1_erz_tks_ident,
+           tt_fls_ident      TYPE RANGE OF yppst_r1_fls_ident,
+           tt_fls_loc        TYPE RANGE OF yppst_r1_fls_standort,
+           tt_fapo           TYPE RANGE OF yppst_r1_erz_auftragsnummer1,
+           tt_fapo_item      TYPE RANGE OF yppst_r1_erz_auftragsposition1,
+           tt_heat_no        TYPE RANGE OF yppst_r1_chargen_nr,
+           tt_process_flag   TYPE RANGE OF yppst_r1_process_flag,
+           tt_terr_flag      TYPE RANGE OF yppst_r1_process_flag,
+**BOC for CL#4
+           tt_sap_conf_table TYPE RANGE OF yppst_r1_sap_conf_table.
+**EOC for CL#4
+
+*&---------------------------------------------------------------------*
+*&  Global Internal Tables
+*&---------------------------------------------------------------------*
+
+    DATA: gt_id_meldung     TYPE tt_id_meldung,
+          gt_date           TYPE tt_date,
+          gt_date_time      TYPE tt_date_time,
+          gt_workcenter     TYPE tt_workcenter,
+          gt_pss_id         TYPE tt_pss_id,
+          gt_fls_ident      TYPE tt_fls_ident,
+          gt_fls_loc        TYPE tt_fls_loc,
+          gt_fapo           TYPE tt_fapo,
+          gt_fapo_item      TYPE tt_fapo_item,
+          gt_heat_no        TYPE tt_heat_no,
+          gt_row            TYPE syst_tabix,
+          gv_sucess         TYPE checkbox,         "##NEEDED
+          gv_error          TYPE checkbox,         "##NEEDED
+          gv_not_process    TYPE checkbox,         "##NEEDED
+          gt_ter            TYPE tt_terr_flag,
+          gt_process_flag   TYPE tt_process_flag,
+**BOC for CL#4
+          gt_sap_conf_table TYPE tt_sap_conf_table.
+**EOC for CL#4
+
+*&---------------------------------------------------------------------*
+*&  Constants Declarations
+*&---------------------------------------------------------------------*
+    CONSTANTS: c_title_9000     TYPE char10 VALUE 'TITLE_9000',
+               c_container_9000 TYPE char20 VALUE 'TOMIS_TREE'.
+
+*&---------------------------------------------------------------------*
+*&  Methods
+*&---------------------------------------------------------------------*
+    METHODS : constructor IMPORTING it_id_meldung     TYPE tt_id_meldung
+                                    it_date           TYPE tt_date
+                                    it_date_time      TYPE tt_date_time
+                                    it_workcenter     TYPE tt_workcenter
+                                    it_pss_id         TYPE tt_pss_id
+                                    it_fls_ident      TYPE tt_fls_ident
+                                    it_fls_loc        TYPE tt_fls_loc
+                                    it_fapo           TYPE tt_fapo
+                                    it_fapo_item      TYPE tt_fapo_item
+                                    it_heat_no        TYPE tt_heat_no
+                                    iv_succ           TYPE checkbox
+                                    iv_not_pro        TYPE checkbox
+                                    iv_err            TYPE checkbox
+                                    it_process_flag   TYPE tt_process_flag
+                                    it_ter            TYPE tt_terr_flag
+                                    iv_maxro          TYPE syst_tabix
+                                    iv_layout         TYPE slis_vari
+                                    it_sap_conf_table TYPE tt_sap_conf_table,
+
+***validate input
+      validate_input,
+*** Check Authorization
+      check_auth IMPORTING iv_tcode TYPE tcode,
+**BOC for CL#2
+      select_data.
+**EOC for CL#2
+    CLASS-METHODS:
+      get_tree_data IMPORTING iv_flag TYPE char1 OPTIONAL,
+
+*     Add the main node as TOMIS ID
+      add_bestandstag_main  IMPORTING is_ds_tom    TYPE yppst_r1_tomis_header
+                                      iv_space_key TYPE lvc_nkey
+                            CHANGING  xv_node_key  TYPE lvc_nkey,
+*     Get the First ITEM NODE as Date
+      add_bestandstag_line  IMPORTING is_ds_tom    TYPE yppst_r1_tomis_header
+                                      iv_space_key TYPE lvc_nkey
+                            CHANGING  xv_node_key  TYPE lvc_nkey,
+*     Get the Second Item as Flags
+      add_process_flag_line IMPORTING is_ds_tom   TYPE yppst_r1_tomis_header
+                                      iv_date_key TYPE lvc_nkey
+                            CHANGING  xv_node_key TYPE lvc_nkey,
+***BOC for CL#2
+***Get the third Item as table
+      add_table_name       IMPORTING is_ds_tom        TYPE yppst_r1_tomis_header
+                                     iv_flag_key      TYPE lvc_nkey
+                                     iv_sap_tablename TYPE yppst_r1_sap_conf_table
+                                     iv_tabix         TYPE sy-tabix OPTIONAL
+                           CHANGING  xv_node_key      TYPE lvc_nkey,
+***EOC for CL#2
+**BOC for CL#2
+*commented for CL#2
+*     Get the complate data
+*      add_complete_line IMPORTING is_ds_tom   TYPE yppst_r1_tomis_header
+*                                  iv_flag_key TYPE lvc_nkey
+*                        CHANGING  xv_node_key TYPE lvc_nkey,
+**EOC for CL#2
+*     To call the screen
+      screen_calling,
+*     To build the tree header
+      build_header CHANGING xs_header TYPE treev_hhdr,
+
+      build_fieldcatalog,
+
+      get_alv_structure EXPORTING et_comp TYPE cl_abap_structdescr=>component_table
+                                  et_ref  TYPE tt_ref.
+**BOC for CL#1
+    CLASS-METHODS:
+      layout_f4_help CHANGING xv_layout TYPE  disvariant-variant.
+**EOC for CL#1
+
+  PRIVATE SECTION.
+
+
+ENDCLASS.
+CLASS lcl_tree_event_receiver DEFINITION.
+  PUBLIC SECTION.
+*&---------------------------------------------------------------------*
+*&  Event
+*&---------------------------------------------------------------------*
+    EVENTS trigger_msg EXPORTING VALUE(iv_msgtype) TYPE bapi_mtype
+                                  VALUE(iv_id)      TYPE symsgid  OPTIONAL
+                                  VALUE(iv_number)  TYPE symsgno  OPTIONAL
+                                  VALUE(iv_msgv1)   TYPE symsgv OPTIONAL
+                                  VALUE(iv_msgv2)   TYPE symsgv OPTIONAL
+                                  VALUE(iv_msgv3)   TYPE symsgv OPTIONAL
+                                  VALUE(iv_msgv4)   TYPE symsgv OPTIONAL.
+
+    CLASS-METHODS:
+
+      handle_item_double_click FOR EVENT item_double_click OF cl_gui_alv_tree
+        IMPORTING
+            node_key sender,
+**BOC for CL#2
+      refresh,
+**EOC for CL#2
+*   to fill the alv structure
+      fill_alv   IMPORTING is_tomis TYPE yppst_r1_tomis OPTIONAL,
+
+      fill_alv_conf1 IMPORTING
+                       is_tomis TYPE yppst_r1_tomis OPTIONAL
+                       is_conf1 TYPE yppst_r1_conf1 OPTIONAL,
+
+      fill_alv_conf2 IMPORTING
+                       is_tomis TYPE yppst_r1_tomis OPTIONAL
+                       is_conf2 TYPE yppst_r1_conf2 OPTIONAL,
+
+      fill_alv_conf3 IMPORTING
+                       is_tomis TYPE yppst_r1_tomis OPTIONAL
+                       is_conf3 TYPE yppst_r1_conf3 OPTIONAL,
+
+      fill_alv_conf4 IMPORTING
+                       is_tomis TYPE yppst_r1_tomis OPTIONAL
+                       is_conf4 TYPE yppst_r1_conf4 OPTIONAL,
+
+      fill_alv_slab  IMPORTING
+                       is_tomis TYPE yppst_r1_tomis OPTIONAL
+                       is_slab  TYPE yppst_r1_purslab OPTIONAL,
+
+      fill_alv_batch IMPORTING
+                       is_tomis TYPE yppst_r1_tomis OPTIONAL
+                       is_batch TYPE yppst_r1_batchup OPTIONAL,
+**BOC for CL#3
+      fill_alv_confz IMPORTING
+                       is_tomis TYPE yppst_r1_tomis OPTIONAL
+                       is_confz TYPE yppst_r1_confz OPTIONAL,
+**EOC for CL#3
+
+      display_alv   IMPORTING it_ref   TYPE tt_ref
+                    EXPORTING es_msg   TYPE bal_s_msg
+                    CHANGING  xt_table TYPE data,
+
+      set_hotspot_fields CHANGING xo_alv    TYPE REF TO cl_salv_table,
+
+**  Event Handler for HOTSPOT event
+      on_link_click
+            FOR EVENT link_click OF cl_salv_events_table
+        IMPORTING
+            row
+            column,
+
+** Event Double click for TOMIS ID
+      handle_double_click
+            FOR EVENT double_click OF cl_salv_events_table
+        IMPORTING
+            row,
+*            column,
+*   Select the data from TOMIS and Conf table.
+      select_display_alv IMPORTING it_tom_header TYPE  tt_tomis_header OPTIONAL
+                                   iv_user_flag  TYPE  char1 OPTIONAL,
+*    user command from ALV List
+      on_user_command FOR EVENT added_function OF cl_salv_events
+        IMPORTING e_salv_function,
+
+      update_table  IMPORTING it_tomis TYPE  tt_tomis OPTIONAL
+                              it_conf1 TYPE  tt_conf1 OPTIONAL
+                              it_conf2 TYPE  tt_conf2 OPTIONAL
+                              it_conf3 TYPE  tt_conf3 OPTIONAL
+                              it_conf4 TYPE  tt_conf4 OPTIONAL
+                              it_slab  TYPE  tt_slab  OPTIONAL
+                              it_batch TYPE  tt_batch OPTIONAL
+                              it_confz TYPE  tt_confz OPTIONAL.
+
+ENDCLASS.
+CLASS lcl_msg_handling DEFINITION FINAL.
+  PUBLIC SECTION.
+
+    METHODS: display_msg FOR EVENT trigger_msg OF lcl_ds_error
+      IMPORTING iv_msgtype
+                  iv_id
+                  iv_number
+                  iv_msgv1
+                  iv_msgv2
+                  iv_msgv3
+                  iv_msgv4.
+
+  PRIVATE SECTION.
+
+ENDCLASS.

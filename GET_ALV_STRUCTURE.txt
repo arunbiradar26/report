@@ -1,0 +1,73 @@
+  METHOD get_alv_structure.
+    DATA: lt_dfies    TYPE STANDARD TABLE OF dfies,
+          ls_comp     TYPE abap_componentdescr,
+          lv_leng     TYPE i,
+          lv_decimals TYPE i,
+          ls_ref      TYPE salv_s_ddic_reference,
+          ls_table    TYPE  yppst_r1_alvmap.
+
+    SELECT * FROM yppst_r1_alvmap INTO TABLE @DATA(lt_table) WHERE y_program EQ @iv_program.
+    IF sy-subrc EQ 0.
+      SORT lt_table BY y_sequence.
+      DELETE lt_table WHERE y_fieldname EQ c_process_flag .
+      DELETE lt_table WHERE y_fieldname EQ c_meldung .
+      DELETE lt_table WHERE y_fieldname EQ c_vorgang .
+    ENDIF.
+    ls_table-y_tabname = c_tomis.
+    ls_table-y_fieldname = c_process_flag.
+    INSERT ls_table INTO lt_table INDEX 1.
+    ls_table-y_tabname = c_tomis.
+    ls_table-y_fieldname = c_meldung.
+    INSERT ls_table INTO lt_table INDEX 2 .
+    ls_table-y_tabname = c_tomis.
+    ls_table-y_fieldname = c_vorgang.
+    INSERT ls_table INTO lt_table INDEX 3 .
+
+    LOOP AT lt_table ASSIGNING FIELD-SYMBOL(<ls_table>).
+      CALL FUNCTION 'DDIF_FIELDINFO_GET'
+        EXPORTING
+          tabname        = <ls_table>-y_tabname
+          fieldname      = <ls_table>-y_fieldname
+        TABLES
+          dfies_tab      = lt_dfies
+        EXCEPTIONS
+          not_found      = 1
+          internal_error = 2
+          OTHERS         = 3.
+      IF sy-subrc EQ 0.
+* Implement suitable error handling here
+        READ TABLE lt_dfies ASSIGNING FIELD-SYMBOL(<ls_dfies>) INDEX 1.
+        IF sy-subrc EQ 0.
+          ls_comp-name = <ls_table>-y_fieldname.
+          CASE <ls_dfies>-inttype.
+            WHEN 'N'.
+              lv_leng = <ls_dfies>-leng.
+              ls_comp-type =  cl_abap_elemdescr=>get_n( lv_leng ).
+            WHEN 'D'.
+              ls_comp-type = cl_abap_elemdescr=>get_d( ).
+            WHEN 'P'.
+              lv_leng = <ls_dfies>-leng.
+              lv_decimals =  <ls_dfies>-decimals.
+              ls_comp-type = cl_abap_elemdescr=>get_p( p_length = lv_leng
+                                                         p_decimals = lv_decimals ).
+            WHEN 'C'.
+              lv_leng = <ls_dfies>-leng.
+              ls_comp-type = cl_abap_elemdescr=>get_c(   lv_leng ).
+            WHEN 'T'.
+              ls_comp-type = cl_abap_elemdescr=>get_t( ).
+            WHEN 'X'.
+              lv_leng = <ls_dfies>-leng.
+              ls_comp-type = cl_abap_elemdescr=>get_x(   lv_leng ).
+            WHEN OTHERS.
+          ENDCASE.
+          APPEND ls_comp TO et_comp.
+          CLEAR: ls_comp.
+          ls_ref-field = <ls_table>-y_fieldname.
+          ls_ref-table = <ls_table>-y_tabname.
+          APPEND ls_ref TO et_ref.
+          CLEAR ls_ref.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+
+  ENDMETHOD.

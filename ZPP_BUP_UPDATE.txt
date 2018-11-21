@@ -1,0 +1,67 @@
+REPORT yppst_batchupdate.
+**************ThyssenKrupp BASE- SAP Program Header*********************
+*
+*
+*  Name:           I_SCM-PP_0117_TOMIS-ECC_Batch Characteristics Update
+*
+*  Application:    Interface
+*  Module Team:    SCM-PP
+*
+*
+*
+*  CR-ID:         I_SCM-PP_0117
+*  Transport-ID:  BE1K903982
+*  Requester:     Pankaj.S/Swapnil Desale
+*
+*  Programmer:    Arun Biradar
+*
+*
+*  Short description
+* This interface will be the inbound interface (TOMIS to SAP ECC) for updating the
+* Batch characteristics in case of semi-finished or finished products
+* which are declared as downgraded or scrap.
+************************************************************************
+**************ThyssenKrupp BASE - SAP Change Log************************
+*
+*
+*  CR-ID:
+*  Transport-ID:
+*  Requester:     <name of the requester>
+*  Programmer:    <name of the programmer>
+*
+*
+*  Version:       V1.0         Date: 01.06.2016
+*
+*  Short description
+*
+*
+
+* Class Defination
+INCLUDE yppst_batchup_cldef.
+* Class implementation
+INCLUDE yppst_batchup_climp.
+* Global Declarations
+INCLUDE yppst_batchup_top.
+
+START-OF-SELECTION.
+  DATA(go_batch) = NEW lcl_batch_data(                      ##NEEDED
+        it_satztyp           = s_satzty[]
+        it_y_vorgang         = s_vorgan[]
+        it_y_id_meldung      = s_meldun[]
+        it_tks_ident         = s_ident[]
+        it_fls_ident         = s_fls[]
+        it_batch             = s_batch[]
+        it_date              = s_date[]
+        iv_data_check        = p_data
+        iv_batch_check       = p_batch
+        iv_scrap             = p_scrap
+        iv_process           = p_proc
+*BOC for CL#8
+        it_clust             = s_clust[] ).
+*EOC for CL#8
+*        iv_call              = p_call ).
+  DATA(go_msg) = NEW lcl_msg_handling(  )  ##NEEDED.
+
+*- Set message handler
+  SET HANDLER: go_msg->display_msg FOR ALL INSTANCES.
+  go_batch->run( ).

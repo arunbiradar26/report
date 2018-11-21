@@ -1,0 +1,105 @@
+*&---------------------------------------------------------------------*
+*&        YPPST_R1_DS_ERROR
+*&
+*&---------------------------------------------------------------------*
+**************ThyssenKrupp BASE- SAP Program Header*********************
+*
+*
+*  Name:  E_SCM-PP_0077 - Downstream Error Handling Cockpit
+*
+*  Application: Enhancement
+*  Module Team: SCM-PP
+*
+*
+*
+*  CR-ID: E_SCM-PP_0077
+*  Transport-ID: BE1K928970
+*  Requester: Andreas K
+*
+*  Programmer: Arun Biradar
+*
+*
+*  Short description: To enable central monitoring and correction of errors
+*  that appear in SAP ECC related to the TOMIS Interface and the processing
+*    of Downstream data.
+************************************************************************
+**************ThyssenKrupp BASE - SAP Change Log************************
+*
+*
+*  CR-ID:         E_SCM-PP_0077
+*  Transport-ID:
+*  Requester:     <name of the requester>
+*  Programmer:    <name of the programmer>
+*
+*
+*  Version:       V1.0         Date:
+*
+*  Short description
+*
+***************************************************************************
+*----------------------------------------------------------------------------------*
+*Sno.  | HPQC ID     | ALM ID  | Requester    | Programmer  | TR No.    | Date     *
+*CL#1   7925         8000010768  Andreas K      Arun B       BE1K928970  28.07.2017
+*Short Description: There were some new logic provided in defect                   *
+*&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&*
+*----------------------------------------------------------------------------------*
+*Sno.  | HPQC ID     | ALM ID  | Requester    | Programmer  | TR No.    | Date     *
+*CL#2   XXXX         8000010XXX  Andreas K      Arun B       BE1K928970  28.07.2017*
+*Short Description: Additional level is added in left section of the ALV tree      *
+*&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&*
+*----------------------------------------------------------------------------------*
+*Sno.  | HPQC ID     | ALM ID  | Requester    | Programmer  | TR No.    | Date     *
+*CL#3   1200000038    9076      Andreas K      Arun B       BE1K944288  23.08.2017 *
+*Short Description: Additional table is added YPPST_R1_CONFZ along with logic      *
+*&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&*
+*----------------------------------------------------------------------------------*
+*Sno.  | HPQC ID     | ALM ID  | Requester    | Programmer  | TR No.    | Date     *
+*CL#4   1200000193    9302      Andreas K      Arun B       BE1K945492  04.09.2017 *
+*Short Description: Additional table is added YPPST_R1_ERRLOG along with logic     *
+*&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&*
+PROGRAM yppst_r1_ds_error.
+
+* Class Defination
+INCLUDE yppst_ds_error_cldef.
+
+* Global Declarations
+INCLUDE yppst_ds_error_top.
+
+* Class implementation
+INCLUDE yppst_ds_error_climp.
+
+* Start of selection
+START-OF-SELECTION.
+
+  DATA(go_tomis_error) = NEW lcl_ds_error(
+         it_id_meldung  = s_meldun[]
+         it_date        = s_date[]
+         it_date_time   = s_prd_da[]
+         it_workcenter  = s_work_c[]
+         it_pss_id      = s_pss_id[]
+         it_fls_ident   = s_fls_id[]
+         it_fls_loc     = s_fls_lc[]
+         it_fapo        = s_fapo[]
+         it_fapo_item   = s_f_item[]
+         it_heat_no     = s_heat[]
+         iv_succ        = cb_suce
+         iv_not_pro     = cb_bln
+         iv_err         = cb_err
+         it_process_flag = s_flag[]
+         it_ter         = s_ter[]
+         iv_maxro       = p_maxro
+         iv_layout      = p_layout
+         it_sap_conf_table = s_conf[] ).
+  DATA(go_event_receiver) = NEW lcl_tree_event_receiver( ).
+
+  DATA(go_msg) = NEW lcl_msg_handling(  )  ##NEEDED.
+
+*- Set message handler
+  SET HANDLER: go_msg->display_msg FOR ALL INSTANCES.
+
+**Extracting  data based on inpection lot
+  CALL METHOD go_tomis_error->screen_calling.
+
+  INCLUDE yppst_ds_error_pbo.
+
+  INCLUDE yppst_ds_error_pai.

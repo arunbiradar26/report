@@ -1,0 +1,74 @@
+*&---------------------------------------------------------------------*
+*&  Include           YPPST_DS_ERROR_TOP
+*&---------------------------------------------------------------------*
+**************ThyssenKrupp BASE- SAP Program Header*********************
+*
+*
+*  Name:  E_SCM-PP_0077 - Downstream Error Handling Cockpit
+*
+*  Application: Enhancement
+*  Module Team: SCM-PP
+*
+*
+*
+*  CR-ID: E_SCM-PP_0077
+*  Transport-ID: BE1K928970
+*  Requester: Andreas K
+*
+*  Programmer: Arun Biradar
+*
+*
+*  Short description: To enable central monitoring and correction of errors
+*  that appear in SAP ECC related to the TOMIS Interface and the processing
+*    of Downstream data.
+************************************************************************
+**************ThyssenKrupp BASE - SAP Change Log************************
+*
+*
+*  CR-ID:         E_SCM-PP_0077
+*  Transport-ID:
+*  Requester:     <name of the requester>
+*  Programmer:    <name of the programmer>
+*
+*
+*  Version:       V1.0         Date:
+*
+*  Short description
+*
+***************************************************************************
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
+
+SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-002.
+SELECT-OPTIONS: s_meldun  FOR lcl_ds_error=>gv_id_meldung,
+                s_date    FOR lcl_ds_error=>gv_date,
+                s_prd_da  FOR lcl_ds_error=>gv_date_time,
+                s_work_c  FOR lcl_ds_error=>gv_workcenter,
+                s_pss_id  FOR lcl_ds_error=>gv_pss_id,
+                s_fls_id  FOR lcl_ds_error=>gv_fls_ident,
+                s_fls_lc  FOR lcl_ds_error=>gv_fls_loc,
+                s_fapo    FOR lcl_ds_error=>gv_fapo,
+                s_f_item  FOR lcl_ds_error=>gv_fapo_item,
+                s_heat    FOR lcl_ds_error=>gv_heat_no,
+                s_conf    FOR lcl_ds_error=>gv_y_sap_conf_table,
+                s_flag    FOR lcl_ds_error=>gv_conf_flag NO INTERVALS.
+SELECTION-SCREEN END OF BLOCK b2.
+
+SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE TEXT-003.
+PARAMETERS: cb_suce AS CHECKBOX,
+            cb_bln  AS CHECKBOX,
+            cb_err  AS CHECKBOX.
+SELECT-OPTIONS: s_ter FOR lcl_ds_error=>gv_terr NO INTERVALS.
+SELECTION-SCREEN END OF BLOCK b3.
+
+SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE TEXT-004.
+PARAMETERS: p_maxro  TYPE syst_tabix,
+            p_layout TYPE slis_vari.
+SELECTION-SCREEN END OF BLOCK b4.
+
+SELECTION-SCREEN END OF BLOCK b1.
+
+**BOC for CL#1
+**Layout f4 help
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_layout.
+  lcl_ds_error=>layout_f4_help( CHANGING xv_layout = p_layout ).
+**EOC for CL#1

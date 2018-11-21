@@ -1,0 +1,2479 @@
+**************ThyssenKrupp BASE- SAP Program Header*********************
+*
+*
+*  Name:           I_SCM-PP_0117_TOMIS-ECC_Batch Characteristics Update
+*
+*  Application:    Interface
+*  Module Team:    SCM-PP
+*
+*
+*
+*  CR-ID:         I_SCM-PP_0117
+*  Transport-ID:  BE1K903982
+*  Requester:
+*
+*  Programmer:    Arun Biradar
+*
+*
+*  Short description
+* This interface will be the inbound interface (TOMIS to SAP ECC) for updating the
+* Batch characteristics in case of semi-finished or finished products
+* which are declared as downgraded or scrap.
+************************************************************************
+**************ThyssenKrupp BASE - SAP Change Log************************
+*
+*
+*  CR-ID:
+*  Transport-ID:
+*  Requester:     <name of the requester>
+*  Programmer:    <name of the programmer>
+*
+*
+*  Version:       V1.0         Date: 01.06.2016
+*
+*  Short description
+*
+*
+************************************************************************
+*&---------------------------------------------------------------------*
+*&  Include           YPPST_BATCHUP_CLIMP
+*&---------------------------------------------------------------------*
+CLASS lcl_batch_data IMPLEMENTATION.
+  METHOD constructor.
+    DATA: lo_new_type TYPE REF TO cl_abap_structdescr,
+          lo_new_tab  TYPE REF TO cl_abap_tabledescr,
+          lo_data     TYPE REF TO data,
+          lo_line     TYPE REF TO data.
+*- Set selection screen parameters to screen
+    me->gt_satztyp           = it_satztyp .
+    me->gt_y_vorgang         = it_y_vorgang.
+    me->gt_y_id_meldung      = it_y_id_meldung.
+    me->gv_data_check        = iv_data_check.
+    me->gv_batch_check       = iv_batch_check.
+    me->gv_scrap             = iv_scrap.
+    me->gv_process           = iv_process.
+    me->gt_date              = it_date.
+    me->gt_tks_ident         = it_tks_ident.
+    me->gt_fls_ident         = it_fls_ident.
+    me->gt_batch             = it_batch.
+*    me->gv_call              = iv_call.
+*BOC for CL#8
+* cluster
+    gt_clust = it_clust.
+*EOC for CL#8
+* Work Center Mapping
+    gt_wcmap  = ycl_ppst_tomis_i_prodconf=>get_wcmap( ).
+* ALV Structure
+    ycl_ppst_tomis_i_prodconf=>get_alv_structure( EXPORTING iv_program = sy-repid
+                  IMPORTING et_comp   = gt_comp
+                            et_ref    = gt_ref ).
+    IF  gt_comp[] IS NOT INITIAL.
+      lo_new_type = cl_abap_structdescr=>create( gt_comp ).
+
+      lo_new_tab = cl_abap_tabledescr=>create(
+                   p_line_type  = lo_new_type
+                   p_table_kind = cl_abap_tabledescr=>tablekind_std
+                   p_unique     = abap_false ).
+
+      CREATE DATA lo_data TYPE HANDLE lo_new_tab.
+*
+* 6. New internal table in the fieldsymbols
+      ASSIGN lo_data->* TO <gt_alv>.
+      CREATE DATA lo_line LIKE LINE OF <gt_alv>.
+      ASSIGN lo_line->* TO <gs_alv>.
+    ENDIF.
+**BOC of CL#25
+* Characterisitic Mapping
+    gt_charmap = ycl_ppst_tomis_i_prodconf=>get_charmap( ).
+    IF gt_charmap[] IS NOT INITIAL.
+      DELETE gt_charmap WHERE  y_satztyp  NE c_a.       "#EC CI_SORTSEQ
+    ENDIF.
+**EOC of CL#25
+  ENDMETHOD.
+  METHOD run.
+* Description        : 	This method basically contains all method
+*                       calls to run the report
+
+*- for authorization check
+    me->check_auth( lcl_batch_data=>c_tcode ).
+
+**input validation
+    me->validate_input( ).
+
+**Get data
+    me->get_data( ).
+
+
+
+  ENDMETHOD.
+  METHOD validate_input.
+*    BOC for CL#6
+*    IF me->gt_y_id_meldung IS INITIAL.
+*    EOC for CL#6
+***input check for Satzart, Record Type and Processing Flag
+    IF me->gv_data_check EQ abap_true.
+      IF me->gt_satztyp IS INITIAL OR me->gt_y_vorgang IS INITIAL.
+*        *- Raise event
+        RAISE EVENT trigger_msg
+          EXPORTING
+            iv_msgtype = ycl_ppst_tomis_i_prodconf=>c_error
+            iv_id      = ycl_ppst_tomis_i_prodconf=>c_message_cl
+            iv_number  = c_num_210.
+      ENDIF.
+    ENDIF.
+*   BOC for CL#6
+*    ELSE.
+****If TOMIS internal ID is provided in the selection screen then all other parameters need to clear
+*      CLEAR: me->gt_satztyp,me->gt_y_vorgang,me->gt_y_msc2_flag,me->gt_y_scrap_decl_flag.
+*    ENDIF.
+*    EOC for CL#6
+  ENDMETHOD.
+  METHOD get_data.
+* Description        : Select data from TOMIS staging table
+
+    IF me->gv_data_check EQ abap_true.
+      SELECT *                         "CI_NO_TRANSFORM"#EC CI_NOFIRST #CI_NO_TRANSFORM
+        FROM yppst_r1_tomis
+        INTO TABLE @me->gt_r1_tomis   "CI_NO_TRANSFORM
+        WHERE y_vorgang       IN @me->gt_y_vorgang
+          AND y_satztyp       IN @me->gt_satztyp
+          AND y_id_meldung    IN @me->gt_y_id_meldung
+          AND y_bestandstag   IN @me->gt_date
+          AND y_erz_tks_ident IN @me->gt_tks_ident
+          AND y_fls_ident     IN @me->gt_fls_ident
+          AND y_sap_batch_no  IN @me->gt_batch
+          AND y_process_flag  NE @ycl_ppst_tomis_i_prodconf=>c_process_y
+          AND y_terminated    EQ @abap_false
+*BOC for CL#8
+          AND y_clst_no       IN @me->gt_clust.
+*EOC for CL#8
+      IF sy-subrc IS INITIAL.
+**BOC for CL#20
+        SELECT *
+         FROM yppst_r1_errlog
+         INTO TABLE @gt_errlog
+         FOR ALL ENTRIES IN @gt_r1_tomis
+        WHERE  y_erz_tks_ident EQ @gt_r1_tomis-y_erz_tks_ident.
+        IF sy-subrc IS INITIAL.
+          SORT gt_errlog BY y_id_meldung.
+        ENDIF.
+**EOC for CL#20
+        CLEAR: gv_low.
+        SELECT low     ##WARN_OK
+          FROM tvarvc
+          UP TO 1 ROWS
+          INTO gv_low
+          WHERE name EQ c_quality_level.
+        ENDSELECT.
+        IF sy-subrc IS NOT INITIAL.
+          CLEAR gv_low.
+        ENDIF.
+      ELSE.
+        IF me->gv_batch_check NE abap_true AND me->gv_scrap NE abap_true.
+          IF sy-batch IS INITIAL.
+            MESSAGE e001(yppst).
+          ENDIF.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+***update the custome table
+    me->update_batch_table( ).
+
+  ENDMETHOD.
+  METHOD update_batch_table.
+* Description        : to updated the conversion table YPPST_R1_BATCHUP
+    DATA: "lt_r1_tomis_d TYPE STANDARD TABLE OF yppst_r1_tomis,
+      ls_mska    TYPE ts_mska,
+      lv_retcode TYPE numc1,
+      lv_string  TYPE string,
+      lv_varkey  TYPE rstable-varkey,
+      lv_flag    TYPE char1,
+**BOC for CL#8
+*      lv_tabixt  TYPE sy-tabix,
+***BOC for CL#20
+      lv_tabixe  TYPE sy-tabix,
+      lv_msgv1   TYPE symsgv.
+**EOC for CL#20
+
+
+**EOC for CL#8
+    DATA : lv_terminated TYPE char1.   " Added CL#18
+    CLEAR: lv_string,lv_varkey,ls_mska,lv_retcode,lv_flag.
+
+***selecting the data for satztyp 'D' or 'Z'.
+    IF me->gt_r1_tomis[] IS NOT INITIAL.
+      SELECT y_id_meldung,y_vorgang,y_bestandstag,y_satztyp,y_erz_tks_ident,y_erz_aggregat_mts,y_fls_ident,
+             y_ein_gewicht,y_erz_gewicht,y_erz_bewertung_technisch,y_ersda,y_ernam,y_uzeit,y_laeda,y_aenam,
+             y_as4time,y_sap_kmat,y_sap_batch_no,y_sap_conf_table,y_tomis_err_flag,
+             y_process_flag,y_error_description
+        FROM yppst_r1_tomis
+        INTO TABLE @DATA(lt_r1_tomis_d)
+        FOR ALL ENTRIES IN @me->gt_r1_tomis
+        WHERE y_erz_tks_ident = @me->gt_r1_tomis-y_erz_tks_ident
+**BOC for CL#22
+*         AND  y_erz_aggregat_mts = @me->gt_r1_tomis-y_erz_aggregat_mts
+**EOC for CL#22
+         AND  y_terminated       = @abap_false.
+      IF sy-subrc IS INITIAL.
+        SORT lt_r1_tomis_d DESCENDING BY y_id_meldung.
+      ENDIF.
+      SELECT y_id_meldung,y_vorgang,y_satztyp,y_erz_aggregat_mts,y_erz_tks_ident,
+             y_sap_kmat,y_sap_batch_no,y_conf_flag
+        FROM yppstcds_conf_table
+        INTO TABLE @DATA(lt_conf)
+        FOR ALL ENTRIES IN @me->gt_r1_tomis
+        WHERE y_erz_tks_ident = @me->gt_r1_tomis-y_erz_tks_ident.
+**BOC for CL#22
+*         AND  y_erz_aggregat_mts = @me->gt_r1_tomis-y_erz_aggregat_mts.
+**BOC for CL#22
+      IF sy-subrc IS INITIAL.
+        SORT lt_conf DESCENDING BY y_id_meldung.
+* Begin of CL#18
+* Select record if any record is terminated in tomis
+        SELECT y_id_meldung,y_vorgang,y_satztyp, y_terminated
+          FROM yppst_r1_tomis
+          INTO TABLE @DATA(lt_tomis_temp)
+          FOR ALL ENTRIES IN @lt_conf
+          WHERE y_id_meldung EQ @lt_conf-y_id_meldung
+          AND y_terminated      EQ @abap_true.
+        IF sy-subrc EQ 0.
+          SORT lt_tomis_temp BY y_id_meldung y_vorgang.
+        ENDIF.
+* End of CL#18
+      ENDIF.
+    ENDIF.
+
+    IF me->gv_data_check EQ abap_true.
+***Data conversion and batch table update
+      CLEAR: lv_string, gs_r1_batchup,gv_call.
+      LOOP AT me->gt_r1_tomis ASSIGNING FIELD-SYMBOL(<ls_r1_tomis>) "#EC CI_SORTSEQ
+        WHERE y_vorgang IN me->gt_y_vorgang
+          AND y_satztyp IN me->gt_satztyp.             "#EC CI_SORTSEQ.
+**BOC for CL#19
+        IF <ls_r1_tomis>-y_vorgang EQ c_s.
+          gv_call = abap_true.
+        ENDIF.
+**EOC for CL#19
+**    to records the last change
+        <ls_r1_tomis>-y_laeda                    = sy-datum.
+        <ls_r1_tomis>-y_aenam                    = sy-uname.
+        <ls_r1_tomis>-y_as4time                  = sy-uzeit.
+*     BOC for CL#7
+        gs_r1_batchup-y_posting_date     = <ls_r1_tomis>-y_erz_ereigniszeitpunkt(8).
+*       EOC for CL#7
+**BOC for CL#14
+*          gs_r1_batchup-werks               = ycl_ppst_tomis_i_prodconf=>c_plant.
+        READ TABLE gt_wcmap INTO DATA(ls_wcmap) WITH KEY y_erz_aggregat_mts = <ls_r1_tomis>-y_erz_aggregat_mts.
+        IF sy-subrc IS INITIAL.
+          gs_r1_batchup-werks  = ls_wcmap-werks.
+        ENDIF.
+**EOC for CL#14
+        IF <ls_r1_tomis>-y_flg_verbund NE ycl_ppst_tomis_i_prodconf=>c_process_y.
+          gs_r1_batchup-mandt               = sy-mandt.
+          gs_r1_batchup-y_datuv             = <ls_r1_tomis>-y_bestandstag.
+          gs_r1_batchup-y_id_meldung        = <ls_r1_tomis>-y_id_meldung.
+          gs_r1_batchup-y_vorgang           = <ls_r1_tomis>-y_vorgang.
+          gs_r1_batchup-y_satztyp           = <ls_r1_tomis>-y_satztyp.
+          gs_r1_batchup-y_erz_aggregat_mts  = <ls_r1_tomis>-y_erz_aggregat_mts.
+          gs_r1_batchup-atnam               = me->gv_low.
+          gs_r1_batchup-atwrt               = <ls_r1_tomis>-y_erz_bewertung_technisch.
+          gs_r1_batchup-y_erz_tks_ident     = <ls_r1_tomis>-y_erz_tks_ident.
+          gs_r1_batchup-y_fls_ident         = <ls_r1_tomis>-y_fls_ident.
+          gs_r1_batchup-y_ersda             = sy-datum.
+          gs_r1_batchup-y_ernam             = sy-uname.
+          gs_r1_batchup-y_uzeit             = sy-uzeit.
+
+**checking the material and batch for satztyp D & F
+          READ TABLE lt_r1_tomis_d WITH KEY y_erz_tks_ident = <ls_r1_tomis>-y_erz_tks_ident TRANSPORTING NO FIELDS.
+***BOC for CL#22
+*                                            y_erz_aggregat_mts = <ls_r1_tomis>-y_erz_aggregat_mts TRANSPORTING NO FIELDS.
+***EOC for CL#22
+          IF sy-subrc IS INITIAL.
+            CLEAR:lv_flag.
+* Begin of change CL#4
+            IF gv_call IS NOT INITIAL.
+* End of change CL#4
+* Case of D23
+              LOOP AT lt_r1_tomis_d ASSIGNING FIELD-SYMBOL(<ls_r1_tomis_d>) "#EC CI_NESTED
+                WHERE y_erz_tks_ident = <ls_r1_tomis>-y_erz_tks_ident
+**BOC for CL#22
+*                  AND y_erz_aggregat_mts = <ls_r1_tomis>-y_erz_aggregat_mts
+**EOC for CL#22
+**BOC for CL#19
+                  AND y_satztyp          NE ycl_ppst_tomis_i_prodconf=>c_satztyp_a.
+**EOC for CL#19
+*  Begin of change CL#3
+*              IF <ls_r1_tomis_d>-y_id_meldung LT <ls_r1_tomis>-y_id_meldung.
+                IF <ls_r1_tomis_d>-y_id_meldung LE <ls_r1_tomis>-y_id_meldung.
+* End of Change
+                  lv_flag = abap_true.
+                  EXIT.
+                ENDIF.
+              ENDLOOP.
+* Begin of change CL#4
+            ELSE.
+              LOOP AT lt_r1_tomis_d ASSIGNING <ls_r1_tomis_d> "#EC CI_NESTED
+             WHERE y_erz_tks_ident = <ls_r1_tomis>-y_erz_tks_ident.
+**BOC for CL#22
+*               AND y_erz_aggregat_mts = <ls_r1_tomis>-y_erz_aggregat_mts.
+**EOC for CL#22
+                IF <ls_r1_tomis_d>-y_id_meldung LT <ls_r1_tomis>-y_id_meldung.
+                  lv_flag = abap_true.
+                  EXIT.
+                ENDIF.
+              ENDLOOP.
+            ENDIF.
+*End of change CL#4
+          ENDIF.
+          IF lv_flag = abap_true.
+            IF <ls_r1_tomis_d>-y_process_flag   = ycl_ppst_tomis_i_prodconf=>c_process_y.
+**to check if the above record is completed in conf table
+              READ TABLE lt_conf ASSIGNING FIELD-SYMBOL(<ls_conf_d>)
+                         WITH KEY y_id_meldung = <ls_r1_tomis_d>-y_id_meldung
+                                  y_satztyp    = <ls_r1_tomis_d>-y_satztyp.
+              IF sy-subrc IS INITIAL AND <ls_conf_d>-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+                gs_r1_batchup-y_sap_kmat                 = <ls_conf_d>-y_sap_kmat.
+                gs_r1_batchup-y_sap_batch_no             = <ls_conf_d>-y_sap_batch_no.
+                APPEND gs_r1_batchup TO gt_r1_batchup.
+                <ls_r1_tomis>-y_sap_kmat                 = <ls_conf_d>-y_sap_kmat.
+                <ls_r1_tomis>-y_sap_batch_no             = <ls_conf_d>-y_sap_batch_no.
+                <ls_r1_tomis>-y_process_flag             = ycl_ppst_tomis_i_prodconf=>c_process_y.
+                <ls_r1_tomis>-y_sap_conf_table           = c_yppst_r1_batchup.
+                <ls_r1_tomis>-y_error_description        = TEXT-002.
+**  information for err alv display
+                fill_alv( EXPORTING is_tomis = <ls_r1_tomis> ).
+              ELSE.
+                <ls_r1_tomis>-y_process_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+                lv_string = TEXT-011.
+
+*                READ TABLE lt_r1_tomis_d ASSIGNING <ls_r1_tomis_d>
+*                     WITH KEY y_id_meldung = <ls_conf_d>-y_id_meldung
+*                              y_satztyp    = <ls_conf_d>-y_satztyp.
+*                IF sy-subrc IS INITIAL.
+                REPLACE '&1' WITH <ls_r1_tomis_d>-y_sap_conf_table INTO lv_string.
+*                ENDIF.
+
+                REPLACE '&2' WITH <ls_r1_tomis_d>-y_id_meldung INTO lv_string.
+                REPLACE '&3' WITH <ls_r1_tomis_d>-y_erz_tks_ident INTO lv_string.
+                CONDENSE lv_string.
+                <ls_r1_tomis>-y_error_description = lv_string.
+                <ls_r1_tomis>-y_sap_conf_table    = c_yppst_r1_batchup.
+                CLEAR: lv_string.
+**  information for err alv display
+                fill_alv( EXPORTING is_tomis = <ls_r1_tomis> ).
+              ENDIF.
+            ELSE.
+              <ls_r1_tomis>-y_process_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+              lv_string = TEXT-011.
+***BOC for CL#12
+*              REPLACE '&1' WITH <ls_r1_tomis_d>-y_sap_conf_table INTO lv_string.
+              REPLACE '&1' WITH c_yppst_r1_tomis  INTO lv_string.
+***EOC for CL#12
+*              REPLACE '&2' WITH <ls_r1_tomis>-y_id_meldung INTO lv_string.
+*              REPLACE '&3' WITH <ls_r1_tomis>-y_erz_tks_ident INTO lv_string.
+              REPLACE '&2' WITH <ls_r1_tomis_d>-y_id_meldung INTO lv_string.
+              REPLACE '&3' WITH <ls_r1_tomis_d>-y_erz_tks_ident INTO lv_string.
+              CONDENSE lv_string.
+              <ls_r1_tomis>-y_error_description = lv_string.
+              <ls_r1_tomis>-y_sap_conf_table           = c_yppst_r1_batchup.
+              CLEAR: lv_string.
+**  information for err alv display
+              fill_alv( EXPORTING is_tomis = <ls_r1_tomis> ).
+*              CONTINUE.
+            ENDIF.
+          ELSE.
+**to check if the above record is completed in conf table
+****Begin of Changes #CL1
+*            READ TABLE lt_conf  WITH KEY y_erz_tks_ident = <ls_r1_tomis_d>-y_erz_tks_ident
+*                                y_erz_aggregat_mts = <ls_r1_tomis_d>-y_erz_aggregat_mts TRANSPORTING NO FIELDS. "#EC CI_STDSEQ
+            READ TABLE lt_conf WITH KEY y_erz_tks_ident = <ls_r1_tomis>-y_erz_tks_ident TRANSPORTING NO FIELDS.
+**BOC for CL#22
+*                                 y_erz_aggregat_mts = <ls_r1_tomis>-y_erz_aggregat_mts TRANSPORTING NO FIELDS. "#EC CI_STDSEQ
+**EOC for CL#22
+****End of Changes #Cl1
+            IF sy-subrc IS INITIAL.
+              CLEAR:lv_flag.
+* Begin of change CL#4
+              IF gv_call IS NOT INITIAL.
+* End of change CL#4
+**In Case of D23
+                LOOP AT lt_conf ASSIGNING FIELD-SYMBOL(<ls_conf>) "#EC CI_NESTED
+                  WHERE y_erz_tks_ident    = <ls_r1_tomis>-y_erz_tks_ident
+**BOC for CL#22
+*                    AND y_erz_aggregat_mts = <ls_r1_tomis>-y_erz_aggregat_mts
+**EOC for CL#22
+**BOC for CL#19
+                  AND y_satztyp            NE ycl_ppst_tomis_i_prodconf=>c_satztyp_a.
+**EOC for CL#19
+*  Begin of change CL#3
+*                IF <ls_conf>-y_id_meldung LT <ls_r1_tomis>-y_id_meldung.
+                  IF <ls_conf>-y_id_meldung LE <ls_r1_tomis>-y_id_meldung.
+*  End of change 8000008166
+                    lv_flag = abap_true.
+                    EXIT.
+                  ENDIF.
+                ENDLOOP.
+* Begin of change CL#4
+              ELSE.
+                LOOP AT lt_conf ASSIGNING <ls_conf>      "#EC CI_NESTED
+                WHERE y_erz_tks_ident = <ls_r1_tomis>-y_erz_tks_ident.
+**BOC for CL#22
+*                  AND y_erz_aggregat_mts = <ls_r1_tomis>-y_erz_aggregat_mts.
+**EOC for CL#22
+                  IF <ls_conf>-y_id_meldung LT <ls_r1_tomis>-y_id_meldung.
+
+                    lv_flag = abap_true.
+                    EXIT.
+                  ENDIF.
+                ENDLOOP.
+              ENDIF.
+* BOC CL#5
+            ENDIF.
+* EOC CL#5
+* End of change CL#4
+* Begin of change CL#18
+            CLEAR lv_terminated .
+            IF lv_flag EQ abap_true.
+              READ TABLE lt_tomis_temp WITH KEY y_id_meldung = <ls_conf>-y_id_meldung
+                                                 y_vorgang   = <ls_conf>-y_vorgang
+                                                 TRANSPORTING NO FIELDS BINARY SEARCH.
+              IF sy-subrc EQ 0.
+                lv_terminated = abap_true.
+              ENDIF.
+            ENDIF.
+            IF lv_terminated IS INITIAL.
+*end of change CL#18
+              IF lv_flag EQ abap_true AND <ls_conf>-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+                gs_r1_batchup-y_sap_kmat                 = <ls_conf>-y_sap_kmat.
+                gs_r1_batchup-y_sap_batch_no             = <ls_conf>-y_sap_batch_no.
+                APPEND gs_r1_batchup TO gt_r1_batchup.
+                <ls_r1_tomis>-y_sap_kmat                 = <ls_conf>-y_sap_kmat.
+                <ls_r1_tomis>-y_sap_batch_no             = <ls_conf>-y_sap_batch_no.
+                <ls_r1_tomis>-y_process_flag             = ycl_ppst_tomis_i_prodconf=>c_process_y.
+                <ls_r1_tomis>-y_sap_conf_table           = c_yppst_r1_batchup.
+                <ls_r1_tomis>-y_error_description        = TEXT-002.
+**  information for err alv display
+                fill_alv( EXPORTING is_tomis = <ls_r1_tomis> ).
+* BOC CL#5
+*              ELSE.
+*                <ls_r1_tomis>-y_process_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+*                lv_string = TEXT-001.
+*                REPLACE '&1' WITH <ls_r1_tomis>-y_id_meldung INTO lv_string.
+*                REPLACE '&2' WITH <ls_r1_tomis>-y_erz_tks_ident INTO lv_string.
+*                CONDENSE lv_string.
+*                <ls_r1_tomis>-y_error_description = lv_string.
+*                <ls_r1_tomis>-y_sap_conf_table    = c_yppst_r1_batchup.
+***  information for err alv display
+*                fill_alv( EXPORTING is_tomis = <ls_r1_tomis> ).
+*                CONTINUE.
+*
+*              ENDIF.
+* EOC CL#5
+              ELSE.
+**to check if we have any manual entry of batch and material
+                CLEAR: lv_retcode,ls_mska.
+**BOC for CL#16
+*              ycl_ppst_tomis_i_prodconf=>get_data_for_ident_multi( EXPORTING iv_name      = ycl_ppst_tomis_i_prodconf=>c_i_tks_ident
+*                                                                             iv_tks_ident = <ls_r1_tomis>-y_erz_tks_ident
+*                                                                   IMPORTING es_mska      = ls_mska
+*                                                                             ev_retcode   = lv_retcode ).
+
+                ycl_ppst_tomis_i_prodconf=>get_data_for_ident_m_cds( EXPORTING iv_name      = ycl_ppst_tomis_i_prodconf=>c_i_tks_ident
+                                                                                 iv_tks_ident = <ls_r1_tomis>-y_erz_tks_ident
+                                                                                 iv_werks     = gs_r1_batchup-werks
+                                                                       IMPORTING es_mska      = ls_mska
+                                                                                 ev_retcode   = lv_retcode ).
+**EOC for CL#16
+                IF lv_retcode = 0.
+                  gs_r1_batchup-y_sap_kmat   = ls_mska-matnr.
+                  gs_r1_batchup-y_sap_batch_no   = ls_mska-charg.
+                  APPEND gs_r1_batchup TO gt_r1_batchup.
+                  CLEAR:gs_r1_batchup.
+                  <ls_r1_tomis>-y_sap_kmat                 = ls_mska-matnr.
+                  <ls_r1_tomis>-y_sap_batch_no             = ls_mska-charg.
+                  <ls_r1_tomis>-y_process_flag             = ycl_ppst_tomis_i_prodconf=>c_process_y.
+                  <ls_r1_tomis>-y_sap_conf_table           = c_yppst_r1_batchup.
+                  <ls_r1_tomis>-y_error_description        = TEXT-002.
+**  information for err alv display
+                  fill_alv( EXPORTING is_tomis = <ls_r1_tomis> ).
+                ELSEIF lv_retcode = 1.
+                  <ls_r1_tomis>-y_process_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+                  lv_string = TEXT-009.
+*                REPLACE '&1' WITH <ls_r1_tomis>-y_id_meldung INTO lv_string.
+                  REPLACE '&2' WITH <ls_r1_tomis>-y_erz_tks_ident INTO lv_string.
+                  CONDENSE lv_string.
+                  <ls_r1_tomis>-y_error_description = lv_string.
+                  <ls_r1_tomis>-y_sap_conf_table    = c_yppst_r1_batchup.
+                  CLEAR: lv_string.
+**  information for err alv display
+                  fill_alv( EXPORTING is_tomis = <ls_r1_tomis> ).
+*                CONTINUE.
+                ELSEIF lv_retcode = 2.
+                  <ls_r1_tomis>-y_process_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+                  lv_string = TEXT-010.
+                  REPLACE '&1' WITH <ls_r1_tomis>-y_id_meldung INTO lv_string.
+                  REPLACE '&2' WITH <ls_r1_tomis>-y_erz_tks_ident INTO lv_string.
+                  CONDENSE lv_string.
+                  <ls_r1_tomis>-y_error_description = lv_string.
+                  <ls_r1_tomis>-y_sap_conf_table    = c_yppst_r1_batchup.
+                  CLEAR: lv_string.
+**  information for err alv display
+                  fill_alv( EXPORTING is_tomis = <ls_r1_tomis> ).
+*                CONTINUE.
+                ENDIF.
+* BOC CL#5
+              ENDIF.
+* EOC CL#5
+* Begin of change CL#18
+            ELSE.
+* if record is terminated in Tomis then it should pich data from Batch char
+              CLEAR: lv_retcode,ls_mska .
+              ycl_ppst_tomis_i_prodconf=>get_data_for_ident_m_cds( EXPORTING iv_name      = ycl_ppst_tomis_i_prodconf=>c_i_tks_ident
+                                                                             iv_tks_ident = <ls_r1_tomis>-y_erz_tks_ident
+                                                                             iv_werks     = gs_r1_batchup-werks
+                                                                   IMPORTING es_mska      = ls_mska
+                                                                             ev_retcode   = lv_retcode ).
+              IF lv_retcode = 0.
+                gs_r1_batchup-y_sap_kmat   = ls_mska-matnr.
+                gs_r1_batchup-y_sap_batch_no   = ls_mska-charg.
+                APPEND gs_r1_batchup TO gt_r1_batchup.
+                CLEAR:gs_r1_batchup.
+                <ls_r1_tomis>-y_sap_kmat                 = ls_mska-matnr.
+                <ls_r1_tomis>-y_sap_batch_no             = ls_mska-charg.
+                <ls_r1_tomis>-y_process_flag             = ycl_ppst_tomis_i_prodconf=>c_process_y.
+                <ls_r1_tomis>-y_sap_conf_table           = c_yppst_r1_batchup.
+                <ls_r1_tomis>-y_error_description        = TEXT-002.
+**  information for err alv display
+                fill_alv( EXPORTING is_tomis = <ls_r1_tomis> ).
+              ELSEIF lv_retcode = 1.
+                <ls_r1_tomis>-y_process_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+                lv_string = TEXT-009.
+                REPLACE '&2' WITH <ls_r1_tomis>-y_erz_tks_ident INTO lv_string.
+                CONDENSE lv_string.
+                <ls_r1_tomis>-y_error_description = lv_string.
+                <ls_r1_tomis>-y_sap_conf_table    = c_yppst_r1_batchup.
+                CLEAR: lv_string.
+**  information for err alv display
+                fill_alv( EXPORTING is_tomis = <ls_r1_tomis> ).
+              ELSEIF lv_retcode = 2.
+                <ls_r1_tomis>-y_process_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+                lv_string = TEXT-010.
+                REPLACE '&1' WITH <ls_r1_tomis>-y_id_meldung INTO lv_string.
+                REPLACE '&2' WITH <ls_r1_tomis>-y_erz_tks_ident INTO lv_string.
+                CONDENSE lv_string.
+                <ls_r1_tomis>-y_error_description = lv_string.
+                <ls_r1_tomis>-y_sap_conf_table    = c_yppst_r1_batchup.
+                CLEAR: lv_string.
+**  information for err alv display
+                fill_alv( EXPORTING is_tomis = <ls_r1_tomis> ).
+              ENDIF.
+            ENDIF.
+* Endif of change CL#18
+          ENDIF.
+**//Verbund logic///
+        ELSE.
+**checking the material and batch for satztyp D & F
+          READ TABLE lt_r1_tomis_d WITH KEY y_erz_tks_ident = <ls_r1_tomis>-y_erz_tks_ident TRANSPORTING NO FIELDS.
+**BOC for CL#22
+*                                   y_erz_aggregat_mts = <ls_r1_tomis>-y_erz_aggregat_mts TRANSPORTING NO FIELDS.
+**EOC for CL#22
+          IF sy-subrc IS INITIAL.
+            CLEAR:lv_flag.
+            UNASSIGN: <ls_r1_tomis_d>.
+* Begin of change CL#4
+            IF gv_call IS NOT INITIAL.
+* End of change CL#4
+* case of D23
+              LOOP AT lt_r1_tomis_d ASSIGNING <ls_r1_tomis_d> "#EC CI_NESTED
+                WHERE y_erz_tks_ident    = <ls_r1_tomis>-y_erz_tks_ident
+**BOC for CL#22
+*                  AND y_erz_aggregat_mts = <ls_r1_tomis>-y_erz_aggregat_mts
+**EOC for CL#22
+**BOC for CL#19
+                  AND y_satztyp          NE ycl_ppst_tomis_i_prodconf=>c_satztyp_a.
+**EOC for CL#19
+*  Begin of change 8000008166
+*              IF <ls_r1_tomis_d>-y_id_meldung LT <ls_r1_tomis>-y_id_meldung.
+                IF <ls_r1_tomis_d>-y_id_meldung LE <ls_r1_tomis>-y_id_meldung.
+*  End of change 8000008166
+                  lv_flag = abap_true.
+                  EXIT.
+                ENDIF.
+              ENDLOOP.
+* Begin of change CL#4
+            ELSE.
+              LOOP AT lt_r1_tomis_d ASSIGNING <ls_r1_tomis_d> "#EC CI_NESTED
+                   WHERE y_erz_tks_ident = <ls_r1_tomis>-y_erz_tks_ident.
+**BOC for CL#22
+*                    AND y_erz_aggregat_mts = <ls_r1_tomis>-y_erz_aggregat_mts.
+**EOC for CL#22
+                IF <ls_r1_tomis_d>-y_id_meldung LT <ls_r1_tomis>-y_id_meldung.
+                  lv_flag = abap_true.
+                  EXIT.
+                ENDIF.
+              ENDLOOP.
+            ENDIF.
+* End of change CL#4
+          ENDIF.
+          IF lv_flag = abap_true.
+            IF <ls_r1_tomis_d>-y_process_flag   = ycl_ppst_tomis_i_prodconf=>c_process_y.
+              READ TABLE lt_conf ASSIGNING <ls_conf_d>
+                         WITH KEY y_id_meldung = <ls_r1_tomis_d>-y_id_meldung
+                                  y_satztyp    = <ls_r1_tomis_d>-y_satztyp.
+              IF sy-subrc IS INITIAL  AND <ls_conf_d>-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+**to get the MSKA enteries for Verbund
+                CLEAR: lv_retcode,ls_mska.
+
+                ycl_ppst_tomis_i_prodconf=>get_data_for_ident_verbund( EXPORTING iv_name      = ycl_ppst_tomis_i_prodconf=>c_verbund_tks_id
+                                                                                 iv_tks_ident = <ls_r1_tomis>-y_erz_tks_ident
+                                                                                 iv_werks     = gs_r1_batchup-werks
+                                                                      IMPORTING et_mska      = me->gt_mska
+                                                                                ev_retcode   = lv_retcode ).
+
+                IF lv_retcode = 0.
+                  LOOP AT me->gt_mska ASSIGNING FIELD-SYMBOL(<ls_mska>).
+                    gs_r1_batchup-mandt               = sy-mandt.
+                    gs_r1_batchup-y_datuv             = <ls_r1_tomis>-y_bestandstag.
+                    gs_r1_batchup-y_id_meldung        = <ls_r1_tomis>-y_id_meldung.
+                    gs_r1_batchup-y_vorgang           = <ls_r1_tomis>-y_vorgang.
+                    gs_r1_batchup-y_satztyp           = <ls_r1_tomis>-y_satztyp.
+                    gs_r1_batchup-y_erz_aggregat_mts  = <ls_r1_tomis>-y_erz_aggregat_mts.
+**BOC for CL#14
+*          gs_r1_batchup-werks               = ycl_ppst_tomis_i_prodconf=>c_plant.
+                    CLEAR:ls_wcmap.
+                    READ TABLE gt_wcmap INTO ls_wcmap WITH KEY y_erz_aggregat_mts = <ls_r1_tomis>-y_erz_aggregat_mts.
+                    IF sy-subrc IS INITIAL.
+                      gs_r1_batchup-werks  = ls_wcmap-werks.
+                    ENDIF.
+**EOC for CL#14
+                    gs_r1_batchup-atnam               = me->gv_low.
+                    gs_r1_batchup-atwrt               = <ls_r1_tomis>-y_erz_bewertung_technisch.
+                    gs_r1_batchup-y_erz_tks_ident     = <ls_r1_tomis>-y_erz_tks_ident.
+                    gs_r1_batchup-y_fls_ident         = <ls_r1_tomis>-y_fls_ident.
+                    gs_r1_batchup-y_sap_kmat          = <ls_mska>-matnr.
+                    gs_r1_batchup-y_sap_batch_no      = <ls_mska>-charg.
+                    gs_r1_batchup-y_ersda             = sy-datum.
+                    gs_r1_batchup-y_ernam             = sy-uname.
+                    gs_r1_batchup-y_uzeit             = sy-uzeit.
+***BOC for CL#12
+                    gs_r1_batchup-y_posting_date     = <ls_r1_tomis>-y_erz_ereigniszeitpunkt(8).
+***EOC for CL#12
+                    APPEND gs_r1_batchup TO me->gt_r1_batchup.
+                    CLEAR:gs_r1_batchup.
+                  ENDLOOP.
+                  <ls_r1_tomis>-y_sap_kmat                 = <ls_mska>-matnr.
+                  <ls_r1_tomis>-y_sap_batch_no             = <ls_mska>-charg.
+                  <ls_r1_tomis>-y_process_flag             = ycl_ppst_tomis_i_prodconf=>c_process_y.
+                  <ls_r1_tomis>-y_sap_conf_table           = c_yppst_r1_batchup.
+                  <ls_r1_tomis>-y_error_description        = TEXT-002.
+**  information for err alv display
+                  fill_alv( EXPORTING is_tomis = <ls_r1_tomis> ).
+                ELSE.
+                  <ls_r1_tomis>-y_process_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+                  lv_string = TEXT-009.
+*                  REPLACE '&1' WITH <ls_r1_tomis>-y_id_meldung INTO lv_string.
+                  REPLACE '&2' WITH <ls_r1_tomis>-y_erz_tks_ident INTO lv_string.
+                  CONDENSE lv_string.
+                  <ls_r1_tomis>-y_error_description = lv_string.
+                  <ls_r1_tomis>-y_sap_conf_table    = c_yppst_r1_batchup.
+                  CLEAR: lv_string.
+**  information for err alv display
+                  fill_alv( EXPORTING is_tomis = <ls_r1_tomis> ).
+*                  CONTINUE.
+                ENDIF.
+***BOC for CL#12
+              ELSE.
+                <ls_r1_tomis>-y_process_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+                lv_string = TEXT-011.
+
+*                READ TABLE lt_r1_tomis_d ASSIGNING <ls_r1_tomis_d>
+*                WITH KEY y_id_meldung = <ls_conf_d>-y_id_meldung
+*                         y_satztyp    = <ls_conf_d>-y_satztyp.
+*                IF sy-subrc IS INITIAL.
+                REPLACE '&1' WITH <ls_r1_tomis_d>-y_sap_conf_table INTO lv_string.
+*                ENDIF.
+
+*                REPLACE '&2' WITH <ls_r1_tomis>-y_id_meldung INTO lv_string.
+*                REPLACE '&3' WITH <ls_r1_tomis>-y_erz_tks_ident INTO lv_string.
+                REPLACE '&2' WITH <ls_r1_tomis_d>-y_id_meldung INTO lv_string.
+                REPLACE '&3' WITH <ls_r1_tomis_d>-y_erz_tks_ident INTO lv_string.
+                CONDENSE lv_string.
+                <ls_r1_tomis>-y_error_description = lv_string.
+                <ls_r1_tomis>-y_sap_conf_table    = c_yppst_r1_batchup.
+                CLEAR: lv_string.
+**  information for err alv display
+                fill_alv( EXPORTING is_tomis = <ls_r1_tomis> ).
+*                CONTINUE.
+***EOC for CL#12
+              ENDIF.
+            ELSE.
+              <ls_r1_tomis>-y_process_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+              lv_string = TEXT-011.
+***BOC for CL#12
+*              REPLACE '&1' WITH <ls_r1_tomis_d>-y_sap_conf_table INTO lv_string.
+              REPLACE '&1' WITH c_yppst_r1_tomis  INTO lv_string.
+***EOC for CL#12
+*              REPLACE '&2' WITH <ls_r1_tomis>-y_id_meldung INTO lv_string.
+*              REPLACE '&3' WITH <ls_r1_tomis>-y_erz_tks_ident INTO lv_string.
+              REPLACE '&2' WITH <ls_r1_tomis_d>-y_id_meldung INTO lv_string.
+              REPLACE '&3' WITH <ls_r1_tomis_d>-y_erz_tks_ident INTO lv_string.
+              CONDENSE lv_string.
+              <ls_r1_tomis>-y_error_description = lv_string.
+              <ls_r1_tomis>-y_sap_conf_table    = c_yppst_r1_batchup.
+              CLEAR: lv_string.
+**  information for err alv display
+              fill_alv( EXPORTING is_tomis = <ls_r1_tomis> ).
+*              CONTINUE.
+            ENDIF.
+          ELSE.
+**to check if the above record is completed in conf table
+            READ TABLE lt_conf WITH KEY y_erz_tks_ident = <ls_r1_tomis_d>-y_erz_tks_ident TRANSPORTING NO FIELDS.
+**BOC for CL#22
+*                               y_erz_aggregat_mts = <ls_r1_tomis_d>-y_erz_aggregat_mts TRANSPORTING NO FIELDS.
+**EOC for CL#22
+            IF sy-subrc IS INITIAL.
+              CLEAR:lv_flag.
+              UNASSIGN:<ls_conf>.
+* Begin of change CL#4
+              IF gv_call IS NOT INITIAL.
+* End of change CL#4
+* Case of D23
+                LOOP AT lt_conf ASSIGNING <ls_conf>      "#EC CI_NESTED
+                  WHERE y_erz_tks_ident    = <ls_r1_tomis>-y_erz_tks_ident
+**BOC for CL#22
+*                    AND y_erz_aggregat_mts = <ls_r1_tomis>-y_erz_aggregat_mts
+**EOC for CL#22
+**BOC for CL#19
+                    AND y_satztyp          NE ycl_ppst_tomis_i_prodconf=>c_satztyp_a.
+**EOC for CL#19
+*  Begin of change CL#3
+*                IF <ls_conf>-y_id_meldung LT <ls_r1_tomis>-y_id_meldung.
+                  IF <ls_conf>-y_id_meldung LE <ls_r1_tomis>-y_id_meldung.
+*  End of change 8000008166
+                    lv_flag = abap_true.
+                    EXIT.
+                  ENDIF.
+                ENDLOOP.
+* Begin of change CL#4
+              ELSE.
+                LOOP AT lt_conf ASSIGNING <ls_conf>      "#EC CI_NESTED
+                    WHERE y_erz_tks_ident = <ls_r1_tomis>-y_erz_tks_ident.
+**BOC for CL#22
+*                     AND y_erz_aggregat_mts = <ls_r1_tomis>-y_erz_aggregat_mts.
+**EOC for CL#22
+                  IF <ls_conf>-y_id_meldung LT <ls_r1_tomis>-y_id_meldung.
+                    lv_flag = abap_true.
+                    EXIT.
+                  ENDIF.
+                ENDLOOP.
+              ENDIF.
+** BOC CL#5
+            ENDIF.
+*  EOC CL#5
+* End of change CL#4
+            IF lv_flag EQ abap_true AND <ls_conf>-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+**to get the MSKA enteries for Verbund
+              CLEAR: lv_retcode,ls_mska.
+
+              ycl_ppst_tomis_i_prodconf=>get_data_for_ident_verbund( EXPORTING iv_name      = ycl_ppst_tomis_i_prodconf=>c_verbund_tks_id
+                                                                             iv_tks_ident = <ls_r1_tomis>-y_erz_tks_ident
+                                                                             iv_werks     = gs_r1_batchup-werks
+                                                                   IMPORTING et_mska      = me->gt_mska
+                                                                             ev_retcode   = lv_retcode ).
+
+
+              IF lv_retcode = 0.
+                LOOP AT me->gt_mska ASSIGNING <ls_mska>.
+                  gs_r1_batchup-mandt               = sy-mandt.
+                  gs_r1_batchup-y_datuv             = <ls_r1_tomis>-y_bestandstag.
+                  gs_r1_batchup-y_id_meldung        = <ls_r1_tomis>-y_id_meldung.
+                  gs_r1_batchup-y_vorgang           = <ls_r1_tomis>-y_vorgang.
+                  gs_r1_batchup-y_satztyp           = <ls_r1_tomis>-y_satztyp.
+                  gs_r1_batchup-y_erz_aggregat_mts  = <ls_r1_tomis>-y_erz_aggregat_mts.
+**BOC for CL#14
+*          gs_r1_batchup-werks               = ycl_ppst_tomis_i_prodconf=>c_plant.
+                  CLEAR:ls_wcmap.
+                  READ TABLE gt_wcmap INTO ls_wcmap WITH KEY y_erz_aggregat_mts = <ls_r1_tomis>-y_erz_aggregat_mts.
+                  IF sy-subrc IS INITIAL.
+                    gs_r1_batchup-werks  = ls_wcmap-werks.
+                  ENDIF.
+**EOC for CL#14
+                  gs_r1_batchup-atnam               = me->gv_low.
+                  gs_r1_batchup-atwrt               = <ls_r1_tomis>-y_erz_bewertung_technisch.
+                  gs_r1_batchup-y_erz_tks_ident     = <ls_r1_tomis>-y_erz_tks_ident.
+                  gs_r1_batchup-y_fls_ident         = <ls_r1_tomis>-y_fls_ident.
+                  gs_r1_batchup-y_sap_kmat          = <ls_mska>-matnr.
+                  gs_r1_batchup-y_sap_batch_no      = <ls_mska>-charg.
+                  gs_r1_batchup-y_ersda             = sy-datum.
+                  gs_r1_batchup-y_ernam             = sy-uname.
+                  gs_r1_batchup-y_uzeit             = sy-uzeit.
+***BOC for CL#12
+                  gs_r1_batchup-y_posting_date     = <ls_r1_tomis>-y_erz_ereigniszeitpunkt(8).
+***EOC for CL#12
+                  APPEND gs_r1_batchup TO me->gt_r1_batchup.
+                  CLEAR:gs_r1_batchup.
+                ENDLOOP.
+                <ls_r1_tomis>-y_sap_kmat                 = <ls_mska>-matnr.
+                <ls_r1_tomis>-y_sap_batch_no             = <ls_mska>-charg.
+                <ls_r1_tomis>-y_process_flag             = ycl_ppst_tomis_i_prodconf=>c_process_y.
+                <ls_r1_tomis>-y_sap_conf_table           = c_yppst_r1_batchup.
+                <ls_r1_tomis>-y_error_description        = TEXT-002.
+**  information for err alv display
+                fill_alv( EXPORTING is_tomis = <ls_r1_tomis> ).
+              ELSE.
+                <ls_r1_tomis>-y_process_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+                lv_string = TEXT-009.
+*                REPLACE '&1' WITH <ls_r1_tomis>-y_id_meldung INTO lv_string.
+                REPLACE '&2' WITH <ls_r1_tomis>-y_erz_tks_ident INTO lv_string.
+                CONDENSE lv_string.
+                <ls_r1_tomis>-y_error_description = lv_string.
+                <ls_r1_tomis>-y_sap_conf_table    = c_yppst_r1_batchup.
+                CLEAR: lv_string.
+**  information for err alv display
+                fill_alv( EXPORTING is_tomis = <ls_r1_tomis> ).
+*                CONTINUE.
+              ENDIF.
+* BOC CL#5
+*              ENDIF.
+* EOC cl#5
+            ELSE.
+**to check if we have any manual entry of batch and material
+**to get the MSKA enteries for Verbund
+              CLEAR: lv_retcode,ls_mska.
+
+              ycl_ppst_tomis_i_prodconf=>get_data_for_ident_verbund( EXPORTING iv_name      = ycl_ppst_tomis_i_prodconf=>c_verbund_tks_id
+                                                                             iv_tks_ident = <ls_r1_tomis>-y_erz_tks_ident
+                                                                             iv_werks     = gs_r1_batchup-werks
+                                                                   IMPORTING et_mska      = me->gt_mska
+                                                                             ev_retcode   = lv_retcode ).
+
+              IF lv_retcode = 0.
+                LOOP AT me->gt_mska ASSIGNING <ls_mska>.
+                  gs_r1_batchup-mandt               = sy-mandt.
+                  gs_r1_batchup-y_datuv             = <ls_r1_tomis>-y_bestandstag.
+                  gs_r1_batchup-y_id_meldung        = <ls_r1_tomis>-y_id_meldung.
+                  gs_r1_batchup-y_vorgang           = <ls_r1_tomis>-y_vorgang.
+                  gs_r1_batchup-y_satztyp           = <ls_r1_tomis>-y_satztyp.
+                  gs_r1_batchup-y_erz_aggregat_mts  = <ls_r1_tomis>-y_erz_aggregat_mts.
+**BOC for CL#14
+*          gs_r1_batchup-werks               = ycl_ppst_tomis_i_prodconf=>c_plant.
+                  CLEAR:ls_wcmap.
+                  READ TABLE gt_wcmap INTO ls_wcmap WITH KEY y_erz_aggregat_mts = <ls_r1_tomis>-y_erz_aggregat_mts.
+                  IF sy-subrc IS INITIAL.
+                    gs_r1_batchup-werks  = ls_wcmap-werks.
+                  ENDIF.
+**EOC for CL#14
+                  gs_r1_batchup-atnam               = me->gv_low.
+                  gs_r1_batchup-atwrt               = <ls_r1_tomis>-y_erz_bewertung_technisch.
+                  gs_r1_batchup-y_erz_tks_ident     = <ls_r1_tomis>-y_erz_tks_ident.
+                  gs_r1_batchup-y_fls_ident         = <ls_r1_tomis>-y_fls_ident.
+                  gs_r1_batchup-y_sap_kmat          = <ls_mska>-matnr.
+                  gs_r1_batchup-y_sap_batch_no      = <ls_mska>-charg.
+                  gs_r1_batchup-y_ersda             = sy-datum.
+                  gs_r1_batchup-y_ernam             = sy-uname.
+                  gs_r1_batchup-y_uzeit             = sy-uzeit.
+***BOC for CL#12
+                  gs_r1_batchup-y_posting_date     = <ls_r1_tomis>-y_erz_ereigniszeitpunkt(8).
+***EOC for CL#12
+                  APPEND gs_r1_batchup TO me->gt_r1_batchup.
+                  CLEAR:gs_r1_batchup.
+                ENDLOOP.
+                <ls_r1_tomis>-y_sap_kmat                 = <ls_mska>-matnr.
+                <ls_r1_tomis>-y_sap_batch_no             = <ls_mska>-charg.
+                <ls_r1_tomis>-y_process_flag             = ycl_ppst_tomis_i_prodconf=>c_process_y.
+                <ls_r1_tomis>-y_sap_conf_table           = c_yppst_r1_batchup.
+                <ls_r1_tomis>-y_error_description        = TEXT-002.
+**  information for err alv display
+                fill_alv( EXPORTING is_tomis = <ls_r1_tomis> ).
+              ELSE.
+                <ls_r1_tomis>-y_process_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+                lv_string = TEXT-009.
+*                REPLACE '&1' WITH <ls_r1_tomis>-y_id_meldung INTO lv_string.
+                REPLACE '&2' WITH <ls_r1_tomis>-y_erz_tks_ident INTO lv_string.
+                CONDENSE lv_string.
+                <ls_r1_tomis>-y_error_description = lv_string.
+                <ls_r1_tomis>-y_sap_conf_table    = c_yppst_r1_batchup.
+                CLEAR: lv_string.
+**  information for err alv display
+                fill_alv( EXPORTING is_tomis = <ls_r1_tomis> ).
+*                CONTINUE.
+              ENDIF.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+**BOC for CL#16
+**Table update
+
+        IF gt_r1_batchup[] IS NOT INITIAL.
+
+          MODIFY yppst_r1_batchup FROM TABLE gt_r1_batchup.
+          IF sy-subrc IS INITIAL.
+            COMMIT WORK AND WAIT.
+          ENDIF.
+
+        ENDIF.
+**BOC for CL#20
+        IF <ls_r1_tomis>-y_process_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+**to add the records in error log
+          error_log(
+            EXPORTING
+              is_tomis = <ls_r1_tomis>
+*              is_conf  = gs_r1_batchup
+              iv_del   = abap_false
+          ).
+        ELSE.
+**to delete the records in error log
+          error_log(
+            EXPORTING
+              is_tomis = <ls_r1_tomis>
+*              is_conf  = gs_r1_batchup
+              iv_del   = abap_true
+          ).
+        ENDIF.
+**EOC for CL#20
+
+        MODIFY yppst_r1_tomis FROM <ls_r1_tomis>.
+        IF sy-subrc IS INITIAL.
+          COMMIT WORK AND WAIT.
+        ENDIF.
+
+        CLEAR:gs_r1_batchup,gt_r1_batchup[],gv_call.
+**EOC for CL#16
+      ENDLOOP.
+      UNASSIGN: <ls_r1_tomis>,<ls_mska>,<ls_conf>,<ls_r1_tomis_d>.
+    ENDIF.
+**BOC for CL#16
+
+**BOC for CL#20
+* Update the error log
+    CLEAR: lv_tabixe, lv_msgv1.
+    IF gt_errlog[] IS NOT INITIAL.
+      lv_tabixe = 1.
+      WHILE lv_tabixe IS NOT INITIAL.
+        CALL FUNCTION 'ENQUEUE_E_TABLE'
+          EXPORTING
+            tabname        = c_terr
+            varkey         = lv_varkey
+          EXCEPTIONS
+            foreign_lock   = 1
+            system_failure = 2
+            OTHERS         = 3.
+        IF sy-subrc EQ 0.
+          CLEAR:lv_tabixe.
+          MODIFY yppst_r1_errlog FROM TABLE gt_errlog.
+          IF sy-subrc EQ 0.
+            COMMIT WORK AND WAIT.
+            CALL FUNCTION 'DEQUEUE_E_TABLE'
+              EXPORTING
+                tabname = c_terr
+                varkey  = lv_varkey.
+          ELSE.
+            lv_msgv1  = c_terr.
+            RAISE EVENT trigger_msg
+              EXPORTING iv_msgtype = ycl_ppst_tomis_i_prodconf=>c_error
+                        iv_id      = ycl_ppst_tomis_i_prodconf=>c_msg_cls_eu
+                        iv_number  = c_num_010
+                        iv_msgv1   = lv_msgv1.
+          ENDIF.
+        ELSE.
+          lv_tabixe = sy-subrc.
+        ENDIF.
+      ENDWHILE.
+    ENDIF.
+    IF gt_errlog_del[] IS NOT INITIAL.
+      DELETE yppst_r1_errlog FROM TABLE gt_errlog_del.
+      COMMIT WORK AND WAIT.
+      CLEAR:gt_errlog_del[].
+    ENDIF.
+**BOC for CL#20
+**update the batch table
+*    CLEAR: lv_tabixt .
+*    lv_varkey = sy-mandt.
+*    SORT gt_r1_batchup BY y_datuv y_id_meldung y_vorgang.
+*    IF gt_r1_batchup[] IS NOT INITIAL.
+****BOC for CL#8
+*      lv_tabixt = 1.
+*      WHILE lv_tabixt IS NOT INITIAL.
+***EOC for CL#8
+*        CALL FUNCTION 'ENQUEUE_E_TABLE'
+*          EXPORTING
+*            tabname        = c_yppst_r1_batchup
+*            varkey         = lv_varkey
+*          EXCEPTIONS
+*            foreign_lock   = 1
+*            system_failure = 2
+*            OTHERS         = 3.
+*        IF sy-subrc IS INITIAL.
+*          CLEAR lv_tabixt.              " Code added by Subhash for Incident 8000010830
+*          MODIFY yppst_r1_batchup FROM TABLE gt_r1_batchup.
+*          IF sy-subrc IS INITIAL.
+*            COMMIT WORK.
+*          ELSE.
+*            CLEAR: me->gv_msgv1.
+*            me->gv_msgv1 = c_yppst_r1_batchup.
+*            RAISE EVENT trigger_msg
+*            EXPORTING
+*              iv_msgtype = ycl_ppst_tomis_i_prodconf=>c_error
+*              iv_id      = ycl_ppst_tomis_i_prodconf=>c_msg_cls_eu
+*              iv_number  = c_num_010
+*              iv_msgv1   = me->gv_msgv1.
+*          ENDIF.
+*        ELSE.
+***BOC for CL#8
+**          RAISE EVENT trigger_msg
+**          EXPORTING
+**            iv_msgtype = ycl_ppst_tomis_i_prodconf=>c_error
+**            iv_id      = c_msg_cls_eu
+**            iv_number  = c_num_521.
+*          lv_tabixt = sy-subrc.
+*        ENDIF.
+*      ENDWHILE.
+***EOC for CL#8
+*    ENDIF.
+***update tomis table with checking the lock entries.
+*    CLEAR:lv_tabixt.
+*    IF me->gt_r1_tomis IS NOT INITIAL.
+****BOC for CL#8
+*      lv_tabixt = 1.
+*      WHILE lv_tabixt IS NOT INITIAL.
+***EOC for CL#8
+*        CALL FUNCTION 'ENQUEUE_E_TABLE'
+*          EXPORTING
+*            tabname        = c_yppst_r1_tomis
+*            varkey         = lv_varkey
+*          EXCEPTIONS
+*            foreign_lock   = 1
+*            system_failure = 2
+*            OTHERS         = 3.
+*        IF sy-subrc IS INITIAL.
+*          CLEAR lv_tabixt.              " Code added by Subhash for Incident 8000010830
+**          MODIFY yppst_r1_tomis FROM TABLE lt_r1_tomis_final.
+*          MODIFY yppst_r1_tomis FROM TABLE me->gt_r1_tomis.
+*          IF sy-subrc IS INITIAL.
+*            COMMIT WORK.
+*            CALL FUNCTION 'DEQUEUE_E_TABLE'
+*              EXPORTING
+*                tabname = c_yppst_r1_tomis
+*                varkey  = lv_varkey.
+*          ELSE.
+*            CLEAR: me->gv_msgv1.
+*            me->gv_msgv1 = c_yppst_r1_tomis.
+*            RAISE EVENT trigger_msg
+*            EXPORTING
+*              iv_msgtype = ycl_ppst_tomis_i_prodconf=>c_error
+*              iv_id      = ycl_ppst_tomis_i_prodconf=>c_msg_cls_eu
+*              iv_number  = c_num_010
+*              iv_msgv1   = me->gv_msgv1.
+*          ENDIF.
+*        ELSE.
+***BOC for CL#8
+**          RAISE EVENT trigger_msg
+**          EXPORTING
+**            iv_msgtype = ycl_ppst_tomis_i_prodconf=>c_error
+**            iv_id      = ycl_ppst_tomis_i_prodconf=>c_msg_cls_eu
+**            iv_number  = c_num_521.
+*          lv_tabixt = sy-subrc.
+*        ENDIF.
+*      ENDWHILE.
+***EOC for CL#8
+*    ENDIF.
+*    UNASSIGN:<ls_r1_tomis>, <ls_r1_tomis_d>.
+*    CLEAR:gs_r1_batchup.
+*  ENDIF.
+****EOC for CL#16
+**update the custome table
+    IF me->gv_batch_check EQ abap_true OR me->gv_scrap EQ abap_true.
+      me->update_batch_char( ).
+    ENDIF.
+  ENDMETHOD.
+  METHOD check_auth.
+* Description        : To check the auth
+
+** Local data declaration
+    DATA lv_msgv1 TYPE symsgv.
+
+** User should have authorization to transaction
+    CALL FUNCTION 'AUTHORITY_CHECK_TCODE'
+      EXPORTING
+        tcode  = iv_tcode
+      EXCEPTIONS
+        ok     = 1
+        not_ok = 2
+        OTHERS = 3.
+    IF sy-subrc <> 1.
+
+      MOVE me->c_tcode TO lv_msgv1.
+      RAISE EVENT trigger_msg
+        EXPORTING
+          iv_msgtype = ycl_ppst_tomis_i_prodconf=>c_error
+          iv_id      = ycl_ppst_tomis_i_prodconf=>c_message_cl
+          iv_number  = c_num_044
+          iv_msgv1   = lv_msgv1.
+    ENDIF.
+
+  ENDMETHOD.
+  METHOD update_batch_char.
+* Description        : To updated the batch characteristics
+    DATA:lt_r1_batchup     TYPE SORTED TABLE OF yppst_r1_batchup WITH UNIQUE KEY y_id_meldung y_vorgang y_sap_batch_no werks,
+         lt_r1_batchup_new TYPE STANDARD TABLE OF yppst_r1_batchup,
+         ls_mcha           TYPE mcha,
+         lv_retcode        TYPE bapi_msg,
+         ls_char_batch     TYPE clbatch,
+         lt_char_batch     TYPE TABLE OF clbatch,
+         lv_batch_msg      TYPE string,
+         lv_varkey         TYPE rstable-varkey,
+         lv_tabixt         TYPE sy-tabix.
+
+**selecting the error records from batch table
+
+    CLEAR:ls_mcha,lv_retcode,ls_char_batch,lv_batch_msg,lv_varkey,lv_tabixt.
+    IF me->gt_r1_tomis IS NOT INITIAL.
+      SELECT *     "#EC CI_NOFIELD #CI_NO_TRANSFORM "#EC CI_CMPLX_WHERE
+       FROM yppst_r1_batchup
+       INTO TABLE lt_r1_batchup
+        FOR ALL ENTRIES IN me->gt_r1_tomis
+          WHERE y_id_meldung  EQ me->gt_r1_tomis-y_id_meldung
+           AND   y_satztyp     EQ me->gt_r1_tomis-y_satztyp
+           AND   y_conf_flag   NE ycl_ppst_tomis_i_prodconf=>c_process_y. "#EC CI_CMPLX_WHERE
+      IF sy-subrc IS INITIAL.
+
+      ENDIF.
+**BOC for CL#21
+    ELSEIF ( me->gt_r1_tomis IS INITIAL AND me->gt_clust IS INITIAL ).
+**EOC for CL#21
+      SELECT *     "#EC CI_NOFIELD #CI_NO_TRANSFORM "#EC CI_CMPLX_WHERE
+        FROM yppst_r1_batchup
+        INTO TABLE lt_r1_batchup
+        WHERE y_id_meldung  IN me->gt_y_id_meldung
+        AND y_datuv   IN me->gt_date
+        AND y_erz_tks_ident IN  me->gt_tks_ident
+        AND y_fls_ident     IN  me->gt_fls_ident
+        AND y_sap_batch_no  IN  me->gt_batch
+**BOC for CL#15
+        AND y_conf_flag   NE ycl_ppst_tomis_i_prodconf=>c_process_y. "#EC CI_CMPLX_WHERE
+**EOC for CL#15
+    ENDIF.
+
+    IF sy-subrc IS INITIAL AND lt_r1_batchup[] IS NOT INITIAL.
+      IF me->gt_r1_tomis IS INITIAL.
+        SELECT *
+          FROM yppst_r1_tomis
+          INTO TABLE @me->gt_r1_tomis
+          FOR ALL ENTRIES IN @lt_r1_batchup               "CI_NO_TRANSFORM
+          WHERE y_id_meldung EQ @lt_r1_batchup-y_id_meldung
+            AND y_satztyp    EQ @lt_r1_batchup-y_satztyp.
+        IF sy-subrc IS INITIAL.
+**BOC for CL#20
+          SELECT *
+           FROM yppst_r1_errlog
+           INTO TABLE @gt_errlog
+           FOR ALL ENTRIES IN @gt_r1_tomis
+          WHERE  y_erz_tks_ident EQ @gt_r1_tomis-y_erz_tks_ident.
+          IF sy-subrc IS INITIAL.
+            SORT gt_errlog BY y_id_meldung.
+          ENDIF.
+**EOC for CL#20
+        ENDIF.
+      ENDIF.
+    ELSE.
+      IF me->gt_r1_tomis IS NOT INITIAL.
+        IF sy-batch IS INITIAL.
+          ycl_ppst_tomis_i_prodconf=>display_alv( EXPORTING iv_program = sy-repid
+                                                            it_ref     = gt_ref
+                                                  IMPORTING es_msg = DATA(ls_msg)
+                                                  CHANGING xt_table = <gt_alv> ).
+          IF ls_msg IS NOT INITIAL.
+            RAISE EVENT trigger_msg
+               EXPORTING
+                 iv_msgtype = ycl_ppst_tomis_i_prodconf=>c_error
+                 iv_id      = ls_msg-msgid
+                 iv_number  = ls_msg-msgno.
+          ENDIF.
+        ENDIF.
+      ELSE.
+        CLEAR: lt_r1_batchup[].
+        IF sy-batch IS INITIAL.
+          RAISE EVENT trigger_msg
+          EXPORTING
+            iv_msgtype = me->c_msg_i
+            iv_id      = ycl_ppst_tomis_i_prodconf=>c_message_cl
+            iv_number  = me->c_num_217.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+    IF me->gv_batch_check EQ abap_true.
+      LOOP AT lt_r1_batchup ASSIGNING FIELD-SYMBOL(<ls_r1_batchup>).
+        CLEAR:lv_retcode,ls_mcha,ls_char_batch,lv_batch_msg,lt_char_batch[]. "added lt_char_batch[] for CL#24
+        IF  <ls_r1_batchup>-y_msc2_flag NE ycl_ppst_tomis_i_prodconf=>c_process_y.
+**information of Batch
+          ls_mcha-mandt = sy-mandt.
+
+          CALL FUNCTION 'CONVERSION_EXIT_MATN1_INPUT'
+            EXPORTING
+              input        = <ls_r1_batchup>-y_sap_kmat
+            IMPORTING
+              output       = <ls_r1_batchup>-y_sap_kmat
+            EXCEPTIONS
+              length_error = 1
+              OTHERS       = 2.
+          IF sy-subrc IS INITIAL.
+            ls_mcha-matnr = <ls_r1_batchup>-y_sap_kmat.
+          ENDIF.
+          ls_mcha-charg = <ls_r1_batchup>-y_sap_batch_no.
+          ls_mcha-werks = <ls_r1_batchup>-werks.
+**information of characteristics
+**BOC for CL#25
+          batch_char( EXPORTING is_batch = <ls_r1_batchup>
+                      IMPORTING et_char_batch = lt_char_batch ).
+*          ls_char_batch-atnam = <ls_r1_batchup>-atnam.
+*          ls_char_batch-atwtb = <ls_r1_batchup>-atwrt.
+*          APPEND ls_char_batch TO lt_char_batch.
+*          CLEAR ls_char_batch.
+**EOC for CL#25
+          IF <ls_r1_batchup>-y_msc2_flag NE ycl_ppst_tomis_i_prodconf=>c_process_y.
+**calling the global class for batch update
+            ycl_ppst_tomis_i_prodconf=>batch_update( EXPORTING is_mcha = ls_mcha
+                                                     IMPORTING ev_retcode = lv_retcode
+                                                     CHANGING xt_char_batch = lt_char_batch ).
+            IF lv_retcode IS INITIAL.
+              <ls_r1_batchup>-y_msc2_flag = ycl_ppst_tomis_i_prodconf=>c_process_y.
+              CONCATENATE TEXT-004 ls_mcha-charg ls_mcha-matnr INTO lv_batch_msg SEPARATED BY space.
+              <ls_r1_batchup>-y_err_mssg = lv_batch_msg.
+              IF <ls_r1_batchup>-atwrt NE c_23.
+                <ls_r1_batchup>-y_conf_flag        = ycl_ppst_tomis_i_prodconf=>c_process_y.
+                <ls_r1_batchup>-y_scrap_decl_flag  = ycl_ppst_tomis_i_prodconf=>c_process_n.
+                <ls_r1_batchup>-y_po1_co01_flag    = ycl_ppst_tomis_i_prodconf=>c_process_n.
+                fill_alv( EXPORTING is_conf = <ls_r1_batchup> ).
+              ENDIF.
+              <ls_r1_batchup>-y_laeda                    = sy-datum.
+              <ls_r1_batchup>-y_aenam                    = sy-uname.
+              <ls_r1_batchup>-y_as4time                  = sy-uzeit.
+              APPEND <ls_r1_batchup> TO lt_r1_batchup_new.
+            ELSE.
+              <ls_r1_batchup>-y_msc2_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+              <ls_r1_batchup>-y_conf_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+              <ls_r1_batchup>-y_err_mssg = lv_retcode.
+              <ls_r1_batchup>-y_laeda                    = sy-datum.
+              <ls_r1_batchup>-y_aenam                    = sy-uname.
+              <ls_r1_batchup>-y_as4time                  = sy-uzeit.
+              APPEND <ls_r1_batchup> TO lt_r1_batchup_new.
+**     logic for err alv
+              fill_alv( EXPORTING is_conf = <ls_r1_batchup> ).
+            ENDIF.
+          ENDIF.
+**BOC for CL#20
+          IF <ls_r1_batchup>-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+**to add the records in error log
+            error_log(
+              EXPORTING
+*                is_tomis = <ls_r1_tomis>
+                is_conf  = <ls_r1_batchup>
+                iv_del   = abap_false
+            ).
+          ELSE.
+**to delete the records in error log
+            error_log(
+              EXPORTING
+*                is_tomis = <ls_r1_tomis>
+                is_conf  = <ls_r1_batchup>
+                iv_del   = abap_true
+            ).
+          ENDIF.
+**EOC for CL#20
+        ENDIF.
+      ENDLOOP.
+      UNASSIGN:<ls_r1_batchup>.
+    ENDIF.
+**update the batch table
+    CLEAR:lv_tabixt.
+    lv_varkey = sy-mandt.
+    IF lt_r1_batchup_new[] IS NOT INITIAL.
+***BOC for CL#8
+      lv_tabixt = 1.
+      WHILE lv_tabixt IS NOT INITIAL.
+**EOC for CL#8
+        CALL FUNCTION 'ENQUEUE_E_TABLE'
+          EXPORTING
+            tabname        = c_yppst_r1_batchup
+            varkey         = lv_varkey
+          EXCEPTIONS
+            foreign_lock   = 1
+            system_failure = 2
+            OTHERS         = 3.
+        IF sy-subrc IS INITIAL.
+          CLEAR lv_tabixt.
+          MODIFY yppst_r1_batchup FROM TABLE lt_r1_batchup_new.
+          IF sy-subrc IS INITIAL.
+            COMMIT WORK AND WAIT.
+            CALL FUNCTION 'DEQUEUE_E_TABLE'
+              EXPORTING
+                tabname = c_yppst_r1_batchup
+                varkey  = lv_varkey.
+          ELSE.
+            CLEAR: me->gv_msgv1.
+            me->gv_msgv1 = c_yppst_r1_batchup.
+            RAISE EVENT trigger_msg
+            EXPORTING
+              iv_msgtype = ycl_ppst_tomis_i_prodconf=>c_error
+              iv_id      = ycl_ppst_tomis_i_prodconf=>c_msg_cls_eu
+              iv_number  = c_num_010
+              iv_msgv1   = me->gv_msgv1.
+          ENDIF.
+        ELSE.
+**BOC for CL#8
+*        RAISE EVENT trigger_msg
+*        EXPORTING
+*          iv_msgtype = ycl_ppst_tomis_i_prodconf=>c_error
+*          iv_id      = ycl_ppst_tomis_i_prodconf=>c_msg_cls_eu
+*          iv_number  = c_num_521.
+          lv_tabixt = sy-subrc.
+        ENDIF.
+      ENDWHILE.
+**EOC for CL#8
+    ENDIF.
+**Re-Work Production order creation and confirmation
+    IF lt_r1_batchup_new[] IS NOT INITIAL AND me->gv_scrap EQ abap_true.
+      me->rework_prod_order( EXPORTING it_r1_batchup = lt_r1_batchup_new ).
+    ELSE.
+      IF lt_r1_batchup[] IS NOT INITIAL.
+        lt_r1_batchup_new[] = lt_r1_batchup[].
+        me->rework_prod_order( EXPORTING it_r1_batchup = lt_r1_batchup_new ).
+      ENDIF.
+    ENDIF.
+  ENDMETHOD.
+  METHOD rework_prod_order.
+* Description    : To create the rework production order, consumption of KMAT and scrap declaration/generation
+    DATA:lt_batch_rework TYPE SORTED TABLE OF yppst_r1_batchup WITH UNIQUE KEY y_id_meldung y_vorgang y_sap_batch_no werks,
+         lt_batch_final  TYPE STANDARD TABLE OF yppst_r1_batchup,
+         lv_low_mat      TYPE rvari_val_255,
+         lv_aufnr        TYPE bapi_order_key-order_number,
+         lv_quantity     TYPE yppst_r1_po1_qty,
+         lv_message      TYPE string,
+         lv_varkey       TYPE rstable-varkey,
+         lv_low_prod     TYPE rvari_val_255,
+         lv_dauat        TYPE aufart,
+         lv_vbeln        TYPE vbeln,
+         lv_date         TYPE yppst_r1_posting_date,
+         lv_index        TYPE sy-index,
+         lv_posnr        TYPE posnr,
+         lv_flag         TYPE char1,
+         lv_lin          TYPE  i,
+         lv_string       TYPE string,
+         ls_wcmap        TYPE yppst_r1_wcmap,
+***BOC for CL#20
+         lv_tabixe       TYPE sy-tabix,
+         lv_msgv1        TYPE symsgv,
+**EOC for CL#20
+**BOC for CL#25
+         lv_omatnr       TYPE matnr,
+         lv_matnr_flag   TYPE char1,
+         ls_return       TYPE bapiret2,
+         ls_papo_fm      TYPE ypqst_s_papo,
+         lt_bapiret2     TYPE STANDARD TABLE OF bapiret2.
+**EOC for CL#25
+
+    CLEAR:lv_low_mat,lv_message,
+          lv_varkey,lv_dauat,lv_vbeln,
+          lv_date,lv_index,lv_posnr,lv_flag,lv_lin,ls_wcmap.
+***Selecting the data from S.O and S.O.I
+    lt_batch_rework[] = it_r1_batchup[].
+**Deleting the records which is not equal to 23
+    DELETE lt_batch_rework WHERE atwrt NE c_23.         "#EC CI_SORTSEQ
+
+    IF lt_batch_rework[] IS NOT INITIAL.
+**Deleting the records which is not equal to 23
+      CLEAR: lv_low_prod.
+      SELECT low     ##WARN_OK
+        FROM tvarvc
+        UP TO 1 ROWS
+        INTO lv_low_prod
+        WHERE name EQ c_rework_prd_ord_typ.
+      ENDSELECT.
+      IF sy-subrc IS INITIAL.
+        lv_dauat = lv_low_prod.
+      ENDIF.
+      SELECT low     ##WARN_OK
+        FROM tvarvc
+        UP TO 1 ROWS
+        INTO lv_low_mat
+        WHERE name EQ c_r1pp_scrap_mat_num.
+      ENDSELECT.
+      IF sy-subrc IS NOT INITIAL.
+        CLEAR lv_low_mat.
+      ENDIF.
+      SELECT matnr, werks, lgort, charg, vbeln, posnr, kalab
+        FROM mska
+        INTO TABLE @DATA(lt_mska)
+        FOR ALL ENTRIES IN @lt_batch_rework
+        WHERE matnr = @lt_batch_rework-y_sap_kmat
+          AND werks = @lt_batch_rework-werks
+          AND charg = @lt_batch_rework-y_sap_batch_no
+          AND kalab NE 0.                         "#EC CI_NO_TRANSFORM.
+      IF sy-subrc IS INITIAL.
+        SORT lt_mska BY matnr werks charg.
+      ENDIF.
+    ELSE.
+      IF sy-batch IS INITIAL.
+        ycl_ppst_tomis_i_prodconf=>display_alv( EXPORTING iv_program = sy-repid
+                                                          it_ref     = gt_ref
+                                                IMPORTING es_msg = DATA(ls_msg)
+                                                CHANGING xt_table = <gt_alv> ).
+        IF ls_msg IS NOT INITIAL.
+          RAISE EVENT trigger_msg
+             EXPORTING
+               iv_msgtype = ycl_ppst_tomis_i_prodconf=>c_error
+               iv_id      = ls_msg-msgid
+               iv_number  = ls_msg-msgno.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+**Production order creation and confirmation
+    LOOP AT lt_batch_rework INTO DATA(ls_batch_rework).
+      CLEAR:lv_index,lv_quantity,lv_vbeln,lv_posnr,gv_co11_flag,lv_flag,
+            lv_date,lv_message,gv_msg,lv_aufnr,ls_wcmap,lv_string,lv_lin,
+            lv_omatnr,ls_return,ls_papo_fm,lt_bapiret2,lv_matnr_flag.
+
+      IF  ls_batch_rework-y_msc2_flag = ycl_ppst_tomis_i_prodconf=>c_process_y
+**BOC for 1200000014 by Arun
+        AND ls_batch_rework-y_conf_flag NE ycl_ppst_tomis_i_prodconf=>c_process_y.
+**EOC for 1200000014
+*        lv_index = 1.
+        LOOP AT lt_mska INTO DATA(ls_mska).              "#EC CI_NESTED
+
+          IF ls_mska-matnr = ls_batch_rework-y_sap_kmat
+            AND ls_mska-werks = ls_batch_rework-werks
+            AND ls_mska-charg = ls_batch_rework-y_sap_batch_no.
+
+            lv_index = lv_index + 1.
+
+            IF lv_index EQ 1.
+              lv_vbeln = ls_mska-vbeln.
+              lv_posnr = ls_mska-posnr.
+            ELSE.
+*       BOC for CL#7
+*              lv_date = sy-datum.
+              lv_date = ls_batch_rework-y_posting_date.
+*       EOC for CL#7
+              me->create_goodsmvt( EXPORTING iv_matnr       = ls_mska-matnr
+                                             iv_werks       = ls_mska-werks
+                                             iv_lgort       = ls_mska-lgort
+                                             iv_charg       = ls_mska-charg
+                                             iv_pst_dt      = lv_date
+                                             iv_ent_qty     = ls_mska-kalab
+                                             iv_sal_ord     = ls_mska-vbeln
+                                             iv_sal_itm     = ls_mska-posnr
+                                             iv_val_sal_ord = lv_vbeln
+                                             iv_val_sal_itm = lv_posnr
+                                   IMPORTING ev_allc_err    = lv_flag
+                                             ev_err_msg     = ls_batch_rework-y_err_mssg ).
+            ENDIF.
+
+            lv_quantity  = lv_quantity + ls_mska-kalab.
+
+          ENDIF.
+**BOC for CL#14
+          CLEAR:ls_mska.
+**EOC for CL#14
+        ENDLOOP.
+**BOC for CL#16
+        ls_batch_rework-y_sap_so = lv_vbeln.
+        ls_batch_rework-y_sap_soitem = lv_posnr.
+**EOC for CL#16
+**BOC for CL#25
+        IF ls_batch_rework-y_sap_kmat EQ c_matnr.
+
+          ls_papo_fm-vbeln = ls_batch_rework-y_sap_so.
+          ls_papo_fm-posnr = ls_batch_rework-y_sap_soitem.
+
+          CALL FUNCTION 'Y_PQST_PRODORD_GET_OUTPUTMATNR'
+            EXPORTING
+              is_papo        = ls_papo_fm
+            IMPORTING
+              e_output_matnr = lv_omatnr
+              e_bapiret2     = ls_return
+              et_bapiret2    = lt_bapiret2.
+
+          READ TABLE lt_bapiret2 WITH KEY type = ycl_ppst_tomis_i_prodconf=>c_error TRANSPORTING NO FIELDS.
+          IF sy-subrc IS NOT INITIAL AND lv_omatnr IS NOT INITIAL.
+            CLEAR lv_matnr_flag.
+          ELSE.
+            lv_matnr_flag = abap_true.
+          ENDIF.
+        ENDIF.
+**Eoc for CL#25
+        CLEAR:lv_index,lv_aufnr.
+        IF ls_batch_rework-y_conf_flag NE ycl_ppst_tomis_i_prodconf=>c_process_y.           " 1200000014_9094
+          IF lv_flag NE ycl_ppst_tomis_i_prodconf=>c_error AND lv_matnr_flag IS INITIAL.
+            CLEAR:lv_aufnr.
+**to Check Production Order for the Sales Order
+            IF lv_omatnr IS NOT INITIAL.
+              ycl_ppst_tomis_i_prodconf=>check_the_order( EXPORTING iv_sales_order  = lv_vbeln
+                                                                    iv_so_item      = lv_posnr
+                                                                    iv_op_mat       = lv_omatnr
+                                                                    iv_auart        = lv_dauat
+                                                                    iv_werks        = ls_batch_rework-werks
+                                                          IMPORTING ev_aufnr        = lv_aufnr ).
+            ELSE.
+              ycl_ppst_tomis_i_prodconf=>check_the_order( EXPORTING iv_sales_order  = lv_vbeln
+                                                                    iv_so_item      = lv_posnr
+                                                                    iv_op_mat       = ls_batch_rework-y_sap_kmat
+                                                                    iv_auart        = lv_dauat
+                                                                    iv_werks        = ls_batch_rework-werks
+                                                          IMPORTING ev_aufnr        = lv_aufnr ).
+            ENDIF.
+            IF lv_aufnr IS NOT INITIAL.
+**to the confirmation using the same batch
+
+              me->bdc_co11( EXPORTING is_r1_batchup = ls_batch_rework
+                                      iv_aufnr      = lv_aufnr
+                                      iv_quantity   = lv_quantity
+                                      iv_low_mat    = lv_low_mat
+                            IMPORTING ev_co11_flag = gv_co11_flag
+                                      ev_msg  = gv_msg ).
+              IF gv_co11_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+                ls_batch_rework-y_scrap_decl_flag  = ycl_ppst_tomis_i_prodconf=>c_process_y.
+                ls_batch_rework-y_po  = lv_aufnr.
+                ls_batch_rework-y_po1_co01_flag  = ycl_ppst_tomis_i_prodconf=>c_process_n.
+                ls_batch_rework-y_conf_flag  = ycl_ppst_tomis_i_prodconf=>c_process_y.
+                CONCATENATE TEXT-005 lv_aufnr INTO lv_message SEPARATED BY space.
+                ls_batch_rework-y_err_mssg  = lv_message.
+                ls_batch_rework-y_laeda                    = sy-datum.
+                ls_batch_rework-y_aenam                    = sy-uname.
+                ls_batch_rework-y_as4time                  = sy-uzeit.
+                APPEND ls_batch_rework TO lt_batch_final.
+                fill_alv( EXPORTING is_conf = ls_batch_rework ).
+              ELSE.
+                ls_batch_rework-y_po               = lv_aufnr.
+                ls_batch_rework-y_po1_co01_flag    = ycl_ppst_tomis_i_prodconf=>c_process_n.
+                ls_batch_rework-y_scrap_decl_flag  = ycl_ppst_tomis_i_prodconf=>c_error.
+                ls_batch_rework-y_conf_flag        = ycl_ppst_tomis_i_prodconf=>c_error.
+                CONCATENATE gv_msg lv_aufnr INTO lv_message SEPARATED BY space.
+                ls_batch_rework-y_err_mssg                 = lv_message.
+                ls_batch_rework-y_laeda                    = sy-datum.
+                ls_batch_rework-y_aenam                    = sy-uname.
+                ls_batch_rework-y_as4time                  = sy-uzeit.
+                APPEND ls_batch_rework TO lt_batch_final.
+                fill_alv( EXPORTING is_conf = ls_batch_rework ).
+              ENDIF.
+            ELSE.
+**To create the rework production order
+              CLEAR:lv_aufnr.
+**get the sales order and sales order item info from MSKA table
+              READ TABLE lt_mska ASSIGNING FIELD-SYMBOL(<ls_mska_new>)
+                    WITH KEY matnr = ls_batch_rework-y_sap_kmat
+                             werks = ls_batch_rework-werks
+                             charg = ls_batch_rework-y_sap_batch_no.
+
+              IF sy-subrc IS INITIAL.
+* Work Center Mapping
+                CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+                  EXPORTING
+                    input  = ls_batch_rework-y_erz_aggregat_mts
+                  IMPORTING
+                    output = ls_batch_rework-y_erz_aggregat_mts.
+
+                READ TABLE gt_wcmap INTO ls_wcmap WITH KEY y_erz_aggregat_mts = ls_batch_rework-y_erz_aggregat_mts.
+                IF sy-subrc IS INITIAL.
+
+                  IF ls_wcmap-y_sap_work_center IS INITIAL.
+
+                    ls_wcmap-y_sap_work_center = ls_wcmap-y_sap_work_center_rework.
+
+                  ENDIF.
+
+                  IF ls_wcmap-y_sap_work_center IS NOT INITIAL.
+**BOC for CL#25
+                    IF lv_omatnr IS NOT INITIAL.
+                      me->create_prod_order_rework( EXPORTING iv_werks        = ls_batch_rework-werks
+                                                              iv_ord_type     = lv_dauat
+                                                              iv_sales_order  = <ls_mska_new>-vbeln
+                                                              iv_so_item      = <ls_mska_new>-posnr
+                                                              iv_sap_kmat     = lv_omatnr
+                                                              iv_gewicht      = c_1
+                                                              iv_arbpl        = ls_wcmap-y_sap_work_center
+                                                              iv_process      = me->gv_process
+                                                    IMPORTING ev_aufnr        = lv_aufnr
+                                                              ev_co01         = ls_batch_rework-y_po1_co01_flag
+                                                              ev_err_msg      = ls_batch_rework-y_err_mssg ).
+                    ELSE.
+**EOC for CL#25
+                      me->create_prod_order_rework( EXPORTING iv_werks        = ls_batch_rework-werks
+                                                              iv_ord_type     = lv_dauat
+                                                              iv_sales_order  = <ls_mska_new>-vbeln
+                                                              iv_so_item      = <ls_mska_new>-posnr
+                                                              iv_sap_kmat     = ls_batch_rework-y_sap_kmat
+                                                              iv_gewicht      = c_1
+                                                              iv_arbpl        = ls_wcmap-y_sap_work_center
+                                                              iv_process      = me->gv_process
+                                                    IMPORTING ev_aufnr        = lv_aufnr
+                                                              ev_co01         = ls_batch_rework-y_po1_co01_flag
+                                                              ev_err_msg      = ls_batch_rework-y_err_mssg ).
+                    ENDIF.
+                  ELSE.
+                    ls_batch_rework-y_err_mssg  = TEXT-013.
+                  ENDIF.
+                ELSE.
+                  ls_batch_rework-y_err_mssg  = TEXT-013.
+                ENDIF.
+                IF lv_aufnr IS INITIAL.
+                  CLEAR:lv_string.
+                  ls_batch_rework-y_scrap_decl_flag  = ycl_ppst_tomis_i_prodconf=>c_error.
+                  ls_batch_rework-y_po1_co01_flag    = ycl_ppst_tomis_i_prodconf=>c_error.
+                  ls_batch_rework-y_conf_flag        = ycl_ppst_tomis_i_prodconf=>c_error.
+                  lv_string = ls_batch_rework-y_err_mssg.
+                  lv_lin  = strlen( lv_string ).
+                  IF ( ls_batch_rework-y_err_mssg IS INITIAL OR lv_lin EQ 1 ).
+                    ls_batch_rework-y_err_mssg  = TEXT-015.
+                  ENDIF.
+                  ls_batch_rework-y_laeda                    = sy-datum.
+                  ls_batch_rework-y_aenam                    = sy-uname.
+                  ls_batch_rework-y_as4time                  = sy-uzeit.
+                  APPEND ls_batch_rework TO lt_batch_final.
+                  fill_alv( EXPORTING is_conf = ls_batch_rework ).
+                ELSE.
+**update production order number in table
+                  ls_batch_rework-y_po  = lv_aufnr.
+                  ls_batch_rework-y_po1_co01_flag  = ycl_ppst_tomis_i_prodconf=>c_process_y.
+**to the confirmation using the same batch
+                  me->bdc_co11( EXPORTING is_r1_batchup = ls_batch_rework
+                                          iv_aufnr      = lv_aufnr
+                                          iv_quantity   = lv_quantity
+                                          iv_low_mat    = lv_low_mat
+                                IMPORTING ev_co11_flag = gv_co11_flag
+                                          ev_msg  = gv_msg ).
+                  IF gv_co11_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+                    ls_batch_rework-y_scrap_decl_flag  = ycl_ppst_tomis_i_prodconf=>c_process_y.
+                    ls_batch_rework-y_conf_flag  = ycl_ppst_tomis_i_prodconf=>c_process_y.
+                    CONCATENATE TEXT-005 lv_aufnr INTO lv_message SEPARATED BY space.
+                    ls_batch_rework-y_err_mssg  = lv_message.
+                    ls_batch_rework-y_laeda                    = sy-datum.
+                    ls_batch_rework-y_aenam                    = sy-uname.
+                    ls_batch_rework-y_as4time                  = sy-uzeit.
+                    APPEND ls_batch_rework TO lt_batch_final.
+                    fill_alv( EXPORTING is_conf = ls_batch_rework ).
+                  ELSE.
+                    ls_batch_rework-y_scrap_decl_flag  = ycl_ppst_tomis_i_prodconf=>c_error.
+                    ls_batch_rework-y_conf_flag  = ycl_ppst_tomis_i_prodconf=>c_error.
+                    CONCATENATE gv_msg lv_aufnr INTO lv_message SEPARATED BY space.
+                    ls_batch_rework-y_err_mssg  = lv_message.
+                    ls_batch_rework-y_laeda                    = sy-datum.
+                    ls_batch_rework-y_aenam                    = sy-uname.
+                    ls_batch_rework-y_as4time                  = sy-uzeit.
+                    APPEND ls_batch_rework TO lt_batch_final.
+                    fill_alv( EXPORTING is_conf = ls_batch_rework ).
+                  ENDIF.
+                ENDIF.
+              ELSE.
+                ls_batch_rework-y_scrap_decl_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+***BOC for CL#11
+                ls_batch_rework-y_conf_flag  = ycl_ppst_tomis_i_prodconf=>c_error.
+***EOC for CL#11
+                lv_string = TEXT-009.
+*                REPLACE '&1' WITH ls_batch_rework-y_id_meldung INTO lv_string.
+                REPLACE '&2' WITH ls_batch_rework-y_erz_tks_ident INTO lv_string.
+                CONDENSE lv_string.
+                ls_batch_rework-y_err_mssg = lv_string.
+                ls_batch_rework-y_laeda                    = sy-datum.
+                ls_batch_rework-y_aenam                    = sy-uname.
+                ls_batch_rework-y_as4time                  = sy-uzeit.
+                APPEND ls_batch_rework TO lt_batch_final.
+                fill_alv( EXPORTING is_conf = ls_batch_rework ).
+                CLEAR: lv_string.
+              ENDIF.
+              UNASSIGN:<ls_mska_new>.
+            ENDIF.
+          ELSE.
+            ls_batch_rework-y_laeda                    = sy-datum.
+            ls_batch_rework-y_aenam                    = sy-uname.
+            ls_batch_rework-y_as4time                  = sy-uzeit.
+            ls_batch_rework-y_scrap_decl_flag  = ycl_ppst_tomis_i_prodconf=>c_error.
+***BOC for CL#11
+            ls_batch_rework-y_conf_flag  = ycl_ppst_tomis_i_prodconf=>c_error.
+***EOC for CL#11
+**BOC for CL#25
+            IF lv_matnr_flag IS NOT INITIAL.
+              MESSAGE i228(yppst) INTO ls_batch_rework-y_err_mssg.
+              ls_batch_rework-y_po1_co01_flag  = ycl_ppst_tomis_i_prodconf=>c_error.
+            ENDIF.
+**EOC for CL#25
+            APPEND ls_batch_rework TO lt_batch_final.
+            fill_alv( EXPORTING is_conf = ls_batch_rework ).
+          ENDIF.
+        ENDIF.           " 1200000014_9094
+      ENDIF.
+**BOC for CL#20
+      IF ls_batch_rework-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+**to add the records in error log
+        error_log(
+          EXPORTING
+            is_conf  = ls_batch_rework
+            iv_del   = abap_false
+        ).
+      ELSE.
+**to delete the records in error log
+        error_log(
+          EXPORTING
+            is_conf  = ls_batch_rework
+            iv_del   = abap_true
+        ).
+      ENDIF.
+**EOC for CL#20
+**BOC for CL#14
+      MODIFY yppst_r1_batchup FROM ls_batch_rework .
+      COMMIT WORK AND WAIT.
+**BOC for CL#14
+      CLEAR:ls_batch_rework,gv_co11_flag.
+    ENDLOOP.
+    CLEAR:ls_batch_rework,gv_co11_flag.
+**BOC for CL#20
+* Update the error log
+    CLEAR: lv_tabixe, lv_msgv1.
+    IF gt_errlog[] IS NOT INITIAL.
+      lv_tabixe = 1.
+      WHILE lv_tabixe IS NOT INITIAL.
+        CALL FUNCTION 'ENQUEUE_E_TABLE'
+          EXPORTING
+            tabname        = c_terr
+            varkey         = lv_varkey
+          EXCEPTIONS
+            foreign_lock   = 1
+            system_failure = 2
+            OTHERS         = 3.
+        IF sy-subrc EQ 0.
+          CLEAR:lv_tabixe.
+          MODIFY yppst_r1_errlog FROM TABLE gt_errlog.
+          IF sy-subrc EQ 0.
+            COMMIT WORK AND WAIT.
+            CALL FUNCTION 'DEQUEUE_E_TABLE'
+              EXPORTING
+                tabname = c_terr
+                varkey  = lv_varkey.
+          ELSE.
+            lv_msgv1  = c_terr.
+            RAISE EVENT trigger_msg
+              EXPORTING iv_msgtype = ycl_ppst_tomis_i_prodconf=>c_error
+                        iv_id      = ycl_ppst_tomis_i_prodconf=>c_msg_cls_eu
+                        iv_number  = c_num_010
+                        iv_msgv1   = lv_msgv1.
+          ENDIF.
+        ELSE.
+          lv_tabixe = sy-subrc.
+        ENDIF.
+      ENDWHILE.
+    ENDIF.
+    IF gt_errlog_del[] IS NOT INITIAL.
+      DELETE yppst_r1_errlog FROM TABLE gt_errlog_del.
+      COMMIT WORK AND WAIT.
+    ENDIF.
+**BOC for CL#20
+*    lv_varkey = sy-mandt.
+*    CLEAR:lv_tabixt.
+    IF lt_batch_final IS NOT INITIAL OR <gt_alv> IS NOT INITIAL.
+****BOC for CL#10
+*      lv_tabixt = 1.
+*      WHILE lv_tabixt IS NOT INITIAL.
+***EOC for CL#10
+*        CALL FUNCTION 'ENQUEUE_E_TABLE'
+*          EXPORTING
+*            tabname        = c_yppst_r1_batchup
+*            varkey         = lv_varkey
+*          EXCEPTIONS
+*            foreign_lock   = 1
+*            system_failure = 2
+*            OTHERS         = 3.
+*        IF sy-subrc IS INITIAL.
+*          CLEAR:lv_tabixt.
+*          MODIFY yppst_r1_batchup FROM TABLE lt_batch_final.
+*          IF sy-subrc IS INITIAL.
+*            COMMIT WORK.
+*          ELSE.
+*            CLEAR: me->gv_msgv1.
+*            me->gv_msgv1 = c_yppst_r1_batchup.
+*            RAISE EVENT trigger_msg
+*            EXPORTING
+*              iv_msgtype = ycl_ppst_tomis_i_prodconf=>c_error
+*              iv_id      = ycl_ppst_tomis_i_prodconf=>c_msg_cls_eu
+*              iv_number  = c_num_010
+*              iv_msgv1   = me->gv_msgv1.
+*          ENDIF.
+*        ELSE.
+***BOC for CL#10
+**        RAISE EVENT trigger_msg
+**        EXPORTING
+**          iv_msgtype = ycl_ppst_tomis_i_prodconf=>c_error
+**          iv_id      = ycl_ppst_tomis_i_prodconf=>c_msg_cls_eu
+**          iv_number  = c_num_521.
+*          lv_tabixt = sy-subrc.
+*        ENDIF.
+*      ENDWHILE.
+**EOC for CL#10
+**display the record in alv
+      IF sy-batch IS INITIAL.
+        ycl_ppst_tomis_i_prodconf=>display_alv( EXPORTING iv_program = sy-repid
+                                                          it_ref     = gt_ref
+                                                IMPORTING es_msg =  ls_msg
+                                                CHANGING xt_table = <gt_alv> ).
+      ENDIF.
+    ENDIF.
+  ENDMETHOD.
+  METHOD bdc_co11.
+* Description    : for production order comfirmation
+    DATA: lt_msg      TYPE STANDARD TABLE OF bdcmsgcoll,
+          lt_enq      TYPE STANDARD TABLE OF seqg3,
+          ls_opt      TYPE  ctu_params,
+          lv_date     TYPE char10,
+          lv_matnr    TYPE matnr,
+          lv_quantity TYPE char13,
+          lv_i        TYPE i,
+          lt_errmsg   TYPE TABLE OF t_messages,
+          lv_msgnr    TYPE symsgno,
+          lv_id       TYPE symsgid,
+          lv_message  TYPE bapi_msg,
+          lv_msgv1    TYPE symsgv.
+
+    CLEAR:ls_opt,lv_matnr,lv_i,ev_msg,ev_co11_flag,lv_quantity,lt_errmsg[],ev_msg,lv_msgv1.
+
+    ls_opt-dismode = me->gv_process.
+    ls_opt-updmode = ycl_ppst_tomis_i_prodconf=>c_update_s.
+    ls_opt-nobinpt = abap_true.
+    CLEAR: gt_bdcdata[].
+    lv_matnr = iv_low_mat.
+* Initial screen CO11
+    fill_bdc( iv_program  = 'SAPLCORU'              iv_dynpro   = '0100' iv_dynbegin = 'X' ).
+    fill_bdc( iv_fnam     = 'BDC_CURSOR'            iv_fval     = 'CORUF-AUFNR' ).
+    fill_bdc( iv_fnam     = 'BDC_OKCODE'            iv_fval     = '/00' ).
+    fill_bdc( iv_fnam     = 'CORUF-AUFNR'           iv_fval     = iv_aufnr ).
+    fill_bdc( iv_fnam     = 'CORUF-VORNR'           iv_fval     = '0010' ).
+    fill_bdc( iv_fnam     = 'CORUF-RUECK'           iv_fval     = space ).           "new added as field is filled sometime
+* Next screen
+    fill_bdc( iv_program  = 'SAPLCORU'              iv_dynpro   = '0160' iv_dynbegin = 'X' ).
+    fill_bdc( iv_fnam     = 'BDC_OKCODE'            iv_fval     = '=MB03' ).
+    fill_bdc( iv_fnam     = 'CORUF-TEILR'           iv_fval     = 'X' ).
+    fill_bdc( iv_fnam     = 'AFRUD-WERKS'           iv_fval     = is_r1_batchup-werks ).
+    CALL FUNCTION 'CONVERT_DATE_TO_EXTERNAL'
+      EXPORTING
+*       date_internal            = sy-datum          "for CL#7
+        date_internal            = is_r1_batchup-y_posting_date         "for CL#7
+      IMPORTING
+        date_external            = lv_date
+      EXCEPTIONS
+        date_internal_is_invalid = 1
+        OTHERS                   = 2.
+    IF sy-subrc EQ 0.
+      fill_bdc( iv_fnam     = 'AFRUD-BUDAT'           iv_fval     = lv_date ).
+    ENDIF.
+
+    fill_bdc( iv_fnam     = 'AFRUD-ISDZ'            iv_fval     = '00:00:00' ).
+    fill_bdc( iv_fnam     = 'AFRUD-IEDZ'            iv_fval     = '00:00:00' ).
+    fill_bdc( iv_fnam     = 'AFRUD-PEDZ'            iv_fval     = '00:00:00' ).
+    fill_bdc( iv_fnam     = 'AFRUD-IERZ'            iv_fval     = '00:00:00' ).
+    fill_bdc( iv_fnam     = 'AFRUD-ISBZ'            iv_fval     = '00:00:00' ).
+    fill_bdc( iv_fnam     = 'AFRUD-IEBZ'            iv_fval     = '00:00:00' ).
+    fill_bdc( iv_fnam     = 'AFRUD-ISAZ'            iv_fval     = '00:00:00' ).
+
+* Next screen
+    fill_bdc( iv_program  = 'SAPLCOWB'              iv_dynpro   = '0130' iv_dynbegin = 'X' ).
+    fill_bdc( iv_fnam     = 'BDC_OKCODE'            iv_fval     = '=MALL' ).
+    fill_bdc( iv_fnam     = 'BDC_CURSOR'            iv_fval     = 'COWB_COMP-ERFMG(01)' ).
+* Next screen
+    fill_bdc( iv_program  = 'SAPLCOWB'              iv_dynpro   = '0130' iv_dynbegin = 'X' ).
+    fill_bdc( iv_fnam     = 'BDC_OKCODE'            iv_fval     = '=DELE' ).
+    fill_bdc( iv_fnam     = 'BDC_CURSOR'            iv_fval     = 'COWB_COMP-ERFMG(01)' ).
+* Next screen
+    fill_bdc( iv_program  = 'SAPLCOWB'              iv_dynpro   = '0130' iv_dynbegin = 'X' ).
+    fill_bdc( iv_fnam     = 'BDC_OKCODE'            iv_fval     = '/00' ).
+    fill_bdc( iv_fnam     = 'BDC_CURSOR'            iv_fval     = 'COWB_COMP-LGORT(01)' ).
+    fill_bdc( iv_fnam     = 'COWB_COMP-MATNR(01)'   iv_fval     = is_r1_batchup-y_sap_kmat ).
+    fill_bdc( iv_fnam     = 'COWB_COMP-ERFME(01)'   iv_fval     = ycl_ppst_tomis_i_prodconf=>c_unit_kg ).
+    fill_bdc( iv_fnam     = 'COWB_COMP-WERKS(01)'   iv_fval     = is_r1_batchup-werks ).
+    fill_bdc( iv_fnam     = 'COWB_COMP-LGORT(01)'   iv_fval     = ycl_ppst_tomis_i_prodconf=>c_z001 ).
+
+* Quantity
+    WRITE iv_quantity TO  lv_quantity UNIT ycl_ppst_tomis_i_prodconf=>c_unit_kg.
+    CONDENSE lv_quantity.
+
+    fill_bdc( iv_fnam     = 'COWB_COMP-ERFMG(01)'   iv_fval     = lv_quantity ).
+    fill_bdc( iv_fnam     = 'COWB_COMP-BWART(01)'   iv_fval     = '261' ).        "new added as mentioned by swapnil
+    fill_bdc( iv_fnam     = 'COWB_COMP-SOBKZ(01)'   iv_fval     = 'E' ).          "new added as mentioned by swapnil
+* Next screen
+    fill_bdc( iv_program  = 'SAPLCOWB'              iv_dynpro   = '0130' iv_dynbegin = 'X' ).
+    fill_bdc( iv_fnam     = 'BDC_OKCODE'            iv_fval     = '/00' ).
+    fill_bdc( iv_fnam     = 'BDC_CURSOR'            iv_fval     = 'COWB_COMP-SOBKZ(01)' ).
+    fill_bdc( iv_fnam     = 'COWB_COMP-CHARG(01)'   iv_fval     = is_r1_batchup-y_sap_batch_no ).
+    fill_bdc( iv_fnam     = 'COWB_COMP-SOBKZ(01)'   iv_fval     = ycl_ppst_tomis_i_prodconf=>c_error ).
+* Next screen
+    fill_bdc( iv_program  = 'SAPLCOWB'              iv_dynpro   = '0130' iv_dynbegin = 'X' ).
+    fill_bdc( iv_fnam     = 'BDC_OKCODE'            iv_fval     = '/00' ).
+    fill_bdc( iv_fnam     = 'BDC_CURSOR'            iv_fval     = 'COWB_COMP-BWART(02)' ).
+    fill_bdc( iv_fnam     = 'COWB_COMP-MATNR(02)'   iv_fval     = lv_matnr ).
+    fill_bdc( iv_fnam     = 'COWB_COMP-ERFME(02)'   iv_fval     = ycl_ppst_tomis_i_prodconf=>c_unit_kg ).
+    fill_bdc( iv_fnam     = 'COWB_COMP-WERKS(02)'   iv_fval     = is_r1_batchup-werks ).
+    fill_bdc( iv_fnam     = 'COWB_COMP-LGORT(02)'   iv_fval     = ycl_ppst_tomis_i_prodconf=>c_z001 ).
+    fill_bdc( iv_fnam     = 'COWB_COMP-BWART(02)'   iv_fval     = c_531 ).
+    fill_bdc( iv_fnam     = 'COWB_COMP-ERFMG(02)'   iv_fval     = lv_quantity ).
+* Next screen
+    fill_bdc( iv_program  = 'SAPLCOWB'              iv_dynpro   = '0130' iv_dynbegin = 'X' ).
+    fill_bdc( iv_fnam     = 'BDC_OKCODE'            iv_fval     = '=WEIT' ).
+    fill_bdc( iv_fnam     = 'BDC_CURSOR'            iv_fval     = 'COWB_COMP-BWART(02)' ).
+*Order Confirmation Transaction
+    WHILE lv_i LT 30.
+      CALL FUNCTION 'ENQUEUE_ESORDER'
+        EXPORTING
+          mode_aufk      = 'E'
+          mandt          = sy-mandt
+          aufnr          = iv_aufnr
+        EXCEPTIONS
+          foreign_lock   = 1
+          system_failure = 2
+          OTHERS         = 3.
+      IF sy-subrc IS INITIAL.
+        CALL FUNCTION 'DEQUEUE_ESORDER'
+          EXPORTING
+            mode_aufk = 'E'
+            mandt     = sy-mandt
+            aufnr     = iv_aufnr.
+**BOC for CL#21
+*Production order confirmation
+        CALL FUNCTION 'AUTHORITY_CHECK_TCODE'
+          EXPORTING
+            tcode  = ycl_ppst_tomis_i_prodconf=>c_co11
+          EXCEPTIONS
+            ok     = 1
+            not_ok = 2
+            OTHERS = 3.
+        IF sy-subrc <> 1.
+          MOVE ycl_ppst_tomis_i_prodconf=>c_co11 TO lv_msgv1.
+          RAISE EVENT trigger_msg
+            EXPORTING
+              iv_msgtype = ycl_ppst_tomis_i_prodconf=>c_error
+              iv_id      = me->c_msg_00
+              iv_number  = me->c_num_172
+              iv_msgv1   = lv_msgv1.
+        ELSE.
+**EOC for CL#21
+          CALL TRANSACTION 'CO11' USING gt_bdcdata
+                                  OPTIONS FROM ls_opt    "#EC CI_CALLTA
+                                  MESSAGES INTO lt_msg.
+          IMPORT gt_messages TO lt_errmsg FROM MEMORY ID 'YCO11_ERR'.
+          FREE MEMORY ID 'YCO11_ERR'.
+        ENDIF.
+
+        READ TABLE lt_errmsg ASSIGNING FIELD-SYMBOL(<ls_errmsg>) WITH KEY msgty = ycl_ppst_tomis_i_prodconf=>c_error.
+        IF sy-subrc IS INITIAL.
+          ev_co11_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+          ev_msg = <ls_errmsg>-text.
+        ELSE.
+**BOC for CL#14
+          SORT lt_msg BY msgid msgnr.
+          READ TABLE lt_msg WITH KEY msgid = c_msg_ru                               ##WARN_OK
+                                     msgnr = c_num_110 TRANSPORTING NO FIELDS BINARY SEARCH.
+          IF sy-subrc IS INITIAL.
+            ev_co11_flag = ycl_ppst_tomis_i_prodconf=>c_process_y.
+            ev_msg = TEXT-005.
+          ELSE.
+            READ TABLE lt_msg ASSIGNING FIELD-SYMBOL(<ls_messages>) WITH KEY msgtyp = ycl_ppst_tomis_i_prodconf=>c_error.
+            IF sy-subrc EQ 0.
+              ev_co11_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+              CLEAR: lv_id, lv_msgnr, lv_message.
+              lv_id    = <ls_messages>-msgid.
+              lv_msgnr = <ls_messages>-msgnr.
+              CALL FUNCTION 'BAPI_MESSAGE_GETDETAIL'
+                EXPORTING
+                  id         = lv_id
+                  number     = lv_msgnr
+                  language   = sy-langu
+                  textformat = 'ASC'
+                IMPORTING
+                  message    = lv_message.
+              ev_msg       = lv_message.
+            ELSE.
+              ev_msg = TEXT-006.
+              ev_co11_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+            ENDIF.
+**EOC for CL#14
+          ENDIF.
+        ENDIF.
+
+        EXIT.
+      ELSE.
+        WAIT UP TO 1 SECONDS.
+        lv_i = lv_i + 1.
+        IF lv_i = 30.
+          CALL FUNCTION 'ENQUE_READ'
+            EXPORTING
+              gclient = sy-mandt
+              guname  = space
+            TABLES
+              enq     = lt_enq.
+          SORT lt_enq BY gtarg.                        "#EC CI_SORTLOOP
+          READ TABLE lt_enq ASSIGNING FIELD-SYMBOL(<ls_enq>) WITH KEY gtarg+3(12) = iv_aufnr BINARY SEARCH.
+          IF sy-subrc = 0.
+            CONCATENATE TEXT-008 <ls_enq>-guname INTO ev_msg SEPARATED BY space.
+            ev_co11_flag = ycl_ppst_tomis_i_prodconf=>c_error.
+          ENDIF.
+          EXIT.
+        ENDIF.
+      ENDIF.
+    ENDWHILE.
+  ENDMETHOD.
+  METHOD fill_bdc.
+* Description    : for BDC data
+    DATA: ls_bdcdata TYPE bdcdata.
+* Program
+    IF iv_program IS NOT INITIAL.
+      ls_bdcdata-program = iv_program.
+    ENDIF.
+* Screen
+    IF iv_dynpro IS NOT INITIAL.
+      ls_bdcdata-dynpro = iv_dynpro.
+    ENDIF.
+* Screen Begin
+    IF iv_dynbegin IS NOT INITIAL.
+      ls_bdcdata-dynbegin = iv_dynbegin.
+    ENDIF.
+* Field Name
+    IF iv_fnam IS NOT INITIAL.
+      ls_bdcdata-fnam = iv_fnam.
+    ENDIF.
+* Field value
+    IF iv_fval IS NOT INITIAL.
+      ls_bdcdata-fval = iv_fval.
+      CONDENSE ls_bdcdata-fval.
+    ENDIF.
+    APPEND ls_bdcdata TO gt_bdcdata.
+  ENDMETHOD.
+  METHOD create_goodsmvt.
+* Goods movement
+    DATA: ls_header_move TYPE bapi2017_gm_head_01,
+          lt_item_move   TYPE STANDARD TABLE OF bapi2017_gm_item_create,
+          ls_item_move   TYPE bapi2017_gm_item_create,
+          lt_return      TYPE STANDARD TABLE OF bapiret2.
+
+    CLEAR : lt_item_move[],
+            lt_return[],
+            ls_item_move,
+            ev_allc_err,
+            ev_err_msg.
+
+    ls_header_move-pstng_date   = iv_pst_dt.
+    ls_item_move-material       = iv_matnr.
+    ls_item_move-plant          = iv_werks.
+    ls_item_move-stge_loc       = iv_lgort.
+    ls_item_move-batch          = iv_charg.
+    ls_item_move-spec_stock     = c_spl_stk.    "'E'.
+    ls_item_move-move_type      = c_mvnt_309.    "c_mvnt_413.   "'413'. "replace 413 with 309 for CL#23
+    ls_item_move-entry_qnt      = iv_ent_qty.
+    ls_item_move-sales_ord      = iv_val_sal_ord.
+    ls_item_move-s_ord_item     = iv_val_sal_itm.
+    ls_item_move-val_sales_ord  = iv_sal_ord.
+    ls_item_move-val_s_ord_item = iv_sal_itm.
+
+    APPEND ls_item_move TO lt_item_move.
+    CLEAR ls_item_move.
+
+    CALL METHOD ycl_ppst_tomis_i_prodconf=>goodsmvt_create
+      EXPORTING
+        is_gmvt_header = ls_header_move
+        it_gmvt_item   = lt_item_move
+        iv_gm_code     = c_gm_code
+      IMPORTING
+        et_return      = lt_return.
+
+    SORT lt_return BY type.
+    READ TABLE lt_return ASSIGNING FIELD-SYMBOL(<ls_return1>)
+                             WITH KEY  type = ycl_ppst_tomis_i_prodconf=>c_error BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+      ev_allc_err = ycl_ppst_tomis_i_prodconf=>c_error.
+      ev_err_msg  = <ls_return1>-message.
+    ELSE.
+      ev_allc_err = ycl_ppst_tomis_i_prodconf=>c_process_y.
+      ev_err_msg  = TEXT-012.
+    ENDIF.
+  ENDMETHOD.
+*  METHOD display_data.
+*    CLEAR:gv_repid.
+**  Display ALV
+*    TRY.
+** Create object for ALV
+*        CALL METHOD cl_salv_table=>factory(
+*          IMPORTING
+*            r_salv_table = DATA(lo_alv)
+*          CHANGING
+*            t_table      = xt_table ).
+** Optimize columns
+*        lo_alv->get_columns( )->set_optimize( if_salv_c_bool_sap=>true ).
+*        DATA(lo_columns) = lo_alv->get_columns( ).
+*        lo_columns->set_key_fixation( value = abap_true ).
+*        me->gv_repid = sy-repid.
+*        lo_alv->set_screen_status(
+*              pfstatus      =  ycl_ppst_tomis_i_prodconf=>c_yppst_standard
+*              report        =  me->gv_repid
+*              set_functions =  lo_alv->c_functions_all ).
+*        lo_alv->display( ).
+*      CATCH cx_salv_msg INTO DATA(lo_msg).
+*
+*        DATA(ls_msg) = lo_msg->get_message( ).
+*
+*        RAISE EVENT trigger_msg
+*            EXPORTING
+*              iv_msgtype = ycl_ppst_tomis_i_prodconf=>c_error
+*              iv_id      = ls_msg-msgid
+*              iv_number  = ls_msg-msgno.
+*
+*    ENDTRY.
+*  ENDMETHOD.
+  METHOD create_prod_order_rework.
+* Description    : for rework production order creation
+    DATA: ls_orderdata TYPE bapi_pp_order_create,
+          lv_aufnr     TYPE aufnr,
+          ls_return    TYPE bapiret2,
+          lv_retcode   TYPE numc1,
+          lv_i         TYPE i,
+          ls_opt       TYPE ctu_params,
+          lv_quantity  TYPE char13,
+          lv_number    TYPE bapi_order_key-order_number,
+          lt_messages  TYPE tab_bdcmsgcoll,
+          ls_message   TYPE bdcmsgcoll,
+          lt_enq       TYPE STANDARD TABLE OF seqg3.
+
+    CLEAR:ls_orderdata,lv_aufnr,ls_return,lv_retcode,
+          lv_i,ls_opt,lv_quantity,lv_number,ev_aufnr,ev_err_msg,ev_co01.
+
+    ls_orderdata-material         = iv_sap_kmat.
+    ls_orderdata-plant            = iv_werks.
+    ls_orderdata-planning_plant   = iv_werks.
+    ls_orderdata-order_type       = iv_ord_type.
+    ls_orderdata-basic_start_date = sy-datum.
+    ls_orderdata-basic_end_date   = sy-datum.
+    ls_orderdata-quantity         = iv_gewicht.
+    ls_orderdata-quantity_uom     = ycl_ppst_tomis_i_prodconf=>c_unit_kg.
+
+* Sales Order conversion
+    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+      EXPORTING
+        input  = iv_sales_order
+      IMPORTING
+        output = ls_orderdata-sales_order.
+
+    ls_orderdata-sales_order_item = iv_so_item.
+
+* Call method to create production order
+    ycl_ppst_tomis_i_prodconf=>prodord_create_rework( EXPORTING
+       is_orderdata = ls_orderdata
+     IMPORTING
+       ev_aufnr    = lv_aufnr
+       es_return   = ls_return ).
+
+    IF lv_aufnr IS NOT INITIAL.
+      ev_co01 = ycl_ppst_tomis_i_prodconf=>c_process_y.
+      lv_number = lv_aufnr.
+      ev_aufnr = lv_aufnr.
+      WHILE lv_i LT 30.
+        CLEAR: ls_return.
+        CALL FUNCTION 'BAPI_PRODORD_EXIST_CHECK'
+          EXPORTING
+            number = lv_number
+          IMPORTING
+            return = ls_return.
+        IF ls_return IS INITIAL.
+          WAIT UP TO 1 SECONDS.
+          EXIT.
+        ELSE.
+          WAIT UP TO 1 SECONDS.
+          lv_i = lv_i + 1.
+        ENDIF.
+      ENDWHILE.
+
+**** BDC
+      CLEAR gt_bdcdata[].
+** BDC Parameters
+      ls_opt-dismode = iv_process.
+      ls_opt-updmode = ycl_ppst_tomis_i_prodconf=>c_update_s.
+      ls_opt-nobinpt = abap_true.
+* Quantity
+      WRITE iv_gewicht TO  lv_quantity UNIT ycl_ppst_tomis_i_prodconf=>c_unit_kg.
+      CONDENSE lv_quantity.
+* Initial screen CO02
+      fill_bdc( iv_program  = 'SAPLCOKO1'     iv_dynpro   = '0110' iv_dynbegin = 'X' ).
+      fill_bdc( iv_fnam     = 'BDC_CURSOR'   iv_fval     = 'CAUFVD-AUFNR' ).
+      fill_bdc( iv_fnam     = 'BDC_OKCODE'   iv_fval     = '/00' ).
+      fill_bdc( iv_fnam     = 'CAUFVD-AUFNR'  iv_fval     = lv_aufnr ).
+      fill_bdc( iv_fnam     = 'R62CLORD-FLG_OVIEW'  iv_fval     = 'X' ).
+* Next screen
+      fill_bdc( iv_program  = 'SAPLCOKO1'     iv_dynpro   = '0115' iv_dynbegin = 'X' ).
+      fill_bdc( iv_fnam     = 'BDC_CURSOR'   iv_fval     = 'CAUFVD-GAMNG' ).
+      fill_bdc( iv_fnam     = 'BDC_OKCODE'   iv_fval     = '=VGUE' ).
+* Next screen
+      fill_bdc( iv_program  = 'SAPLCOVG'     iv_dynpro   = '0100' iv_dynbegin = 'X' ).
+      fill_bdc( iv_fnam     = 'BDC_CURSOR'   iv_fval     = 'AFVGD-ARBPL(01)' ).
+      fill_bdc( iv_fnam     = 'BDC_OKCODE'   iv_fval     = '/00' ).
+      fill_bdc( iv_fnam     = 'AFVGD-ARBPL(01)'  iv_fval     = iv_arbpl ).
+
+      fill_bdc( iv_program  = 'SAPLCOVG'     iv_dynpro   = '0100' iv_dynbegin = 'X' ).
+      fill_bdc( iv_fnam     = 'BDC_CURSOR'   iv_fval     = 'AFVGD-ARBPL(01)' ).
+      fill_bdc( iv_fnam     = 'BDC_OKCODE'   iv_fval     = '=KPU2' ).
+* Next screen
+      fill_bdc( iv_program  = 'SAPLCOMK'     iv_dynpro   = '0120' iv_dynbegin = 'X' ).
+      fill_bdc( iv_fnam     = 'BDC_CURSOR'   iv_fval     = 'RESBD-LGORT(01)' ).
+      fill_bdc( iv_fnam     = 'BDC_OKCODE'   iv_fval     = '/00' ).
+      fill_bdc( iv_fnam     = 'RESBD-MATNR(01)'   iv_fval     = iv_sap_kmat ).
+      fill_bdc( iv_fnam     = 'RESBD-MENGE(01)'   iv_fval     = lv_quantity ).
+      fill_bdc( iv_fnam     = 'RESBD-EINHEIT(01)'   iv_fval     = ycl_ppst_tomis_i_prodconf=>c_unit_kg ).
+      fill_bdc( iv_fnam     = 'RESBD-POSTP(01)'   iv_fval     = 'L' ).
+      fill_bdc( iv_fnam     = 'RESBD-VORNR(01)'   iv_fval     = '0010' ).
+      fill_bdc( iv_fnam     = 'RESBD-WERKS(01)'   iv_fval     = ycl_ppst_tomis_i_prodconf=>c_plant ).
+      fill_bdc( iv_fnam     = 'RESBD-LGORT(01)'   iv_fval     = ycl_ppst_tomis_i_prodconf=>c_z001 ).
+
+      fill_bdc( iv_program  = 'SAPLCOMK'     iv_dynpro   = '0120' iv_dynbegin = 'X' ).
+      fill_bdc( iv_fnam     = 'BDC_CURSOR'   iv_fval     = 'RESBD-MATNR(01))' ).
+      fill_bdc( iv_fnam     = 'BDC_OKCODE'   iv_fval     = '=BU' ).
+
+      CLEAR  lv_i.
+      WHILE lv_i LT 30.
+        CALL FUNCTION 'ENQUEUE_ESORDER'
+          EXPORTING
+            mode_aufk      = ycl_ppst_tomis_i_prodconf=>c_error
+            mandt          = sy-mandt
+            aufnr          = lv_aufnr
+          EXCEPTIONS
+            foreign_lock   = 1
+            system_failure = 2
+            OTHERS         = 3.
+        IF sy-subrc = 0.
+          CALL FUNCTION 'DEQUEUE_ESORDER'
+            EXPORTING
+              mode_aufk = ycl_ppst_tomis_i_prodconf=>c_error
+              mandt     = sy-mandt
+              aufnr     = lv_aufnr.
+
+          CALL TRANSACTION 'CO02'  USING gt_bdcdata
+                                                 OPTIONS FROM ls_opt
+                                                 MESSAGES INTO lt_messages.
+          SORT lt_messages BY msgid msgnr.             "#EC CI_SORTLOOP
+          READ TABLE lt_messages INTO ls_message WITH KEY msgid = 'CO'
+                                                         msgnr = '100' BINARY SEARCH.
+          IF sy-subrc NE 0.
+            ls_return-message = ls_message-msgv1.
+            lv_retcode = 1.
+            ev_err_msg = ls_return-message.
+          ENDIF.
+          EXIT.
+        ELSE.
+          WAIT UP TO 1 SECONDS.
+          lv_i = lv_i + 1.
+          IF lv_i = 30.
+            CALL FUNCTION 'ENQUE_READ'
+              EXPORTING
+                gclient = sy-mandt
+                guname  = space
+              TABLES
+                enq     = lt_enq.
+            SORT lt_enq BY gtarg.                      "#EC CI_SORTLOOP
+            READ TABLE lt_enq ASSIGNING FIELD-SYMBOL(<ls_enq>) WITH KEY gtarg+3(12) = lv_aufnr BINARY SEARCH.
+            IF sy-subrc = 0.
+              CONCATENATE TEXT-016 <ls_enq>-guname INTO ev_err_msg SEPARATED BY space.
+              ev_co01 = ycl_ppst_tomis_i_prodconf=>c_error.
+              lv_retcode = 1.
+            ENDIF.
+            EXIT.
+          ENDIF.
+        ENDIF.
+      ENDWHILE.
+      IF lv_retcode IS INITIAL.
+        ev_err_msg = TEXT-014.
+      ENDIF.
+    ELSE.
+      ev_co01 = ycl_ppst_tomis_i_prodconf=>c_error.
+      ev_err_msg = ls_return-message.
+    ENDIF.
+
+  ENDMETHOD.
+  METHOD fill_alv .
+* Description    : To fill the alv structure
+    FIELD-SYMBOLS <lv_field> TYPE any.
+    IF is_tomis IS NOT INITIAL.
+      MOVE-CORRESPONDING is_tomis TO <gs_alv>.
+      ASSIGN COMPONENT ycl_ppst_tomis_i_prodconf=>c_process_flag OF STRUCTURE <gs_alv> TO <lv_field>.
+      IF sy-subrc EQ 0.
+        <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+      ENDIF.
+      APPEND <gs_alv> TO <gt_alv>.
+    ENDIF.
+    IF is_conf IS NOT INITIAL.
+      READ TABLE <gt_alv> ASSIGNING <gs_alv> WITH KEY (ycl_ppst_tomis_i_prodconf=>c_meldung) = is_conf-y_id_meldung
+                                                  (ycl_ppst_tomis_i_prodconf=>c_vorgang) = is_conf-y_vorgang.
+      IF sy-subrc EQ 0.
+        MOVE-CORRESPONDING is_conf TO <gs_alv>.
+        ASSIGN COMPONENT ycl_ppst_tomis_i_prodconf=>c_process_flag OF STRUCTURE <gs_alv> TO <lv_field>.
+        IF sy-subrc EQ 0.
+          IF is_conf-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+          ELSE.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+          ENDIF.
+        ENDIF.
+      ELSE.
+        READ TABLE me->gt_r1_tomis ASSIGNING FIELD-SYMBOL(<ls_tomis>) WITH KEY y_id_meldung = is_conf-y_id_meldung
+                                                                        y_vorgang   =  is_conf-y_vorgang.
+        IF sy-subrc EQ 0.
+          MOVE-CORRESPONDING <ls_tomis> TO <gs_alv>.
+        ENDIF.
+        MOVE-CORRESPONDING is_conf TO <gs_alv>.
+        ASSIGN COMPONENT ycl_ppst_tomis_i_prodconf=>c_process_flag OF STRUCTURE <gs_alv> TO <lv_field>.
+        IF sy-subrc EQ 0.
+          IF is_conf-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_green.
+          ELSE.
+            <lv_field> = ycl_ppst_tomis_i_prodconf=>c_red.
+          ENDIF.
+        ENDIF.
+        APPEND <gs_alv> TO <gt_alv>.
+      ENDIF.
+    ENDIF.
+
+  ENDMETHOD.
+  METHOD error_log.
+* Description    : To update the error log table
+    DATA: ls_errlog TYPE yppst_r1_errlog.
+
+    CLEAR:ls_errlog.
+
+    IF iv_del EQ abap_true.
+**To delete the entry from error log table
+      IF is_tomis-y_process_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y
+        AND is_conf-y_conf_flag IS INITIAL.
+
+        ls_errlog-mandt            = sy-mandt.
+        ls_errlog-y_id_meldung     = is_tomis-y_id_meldung.
+        ls_errlog-y_vorgang        = is_tomis-y_vorgang.
+        ls_errlog-y_erz_tks_ident  = is_tomis-y_erz_tks_ident.
+        ls_errlog-y_satztyp        = is_tomis-y_satztyp.
+        ls_errlog-y_sap_conf_table = c_yppst_r1_tomis.
+        ls_errlog-y_entry_date     = sy-datum.
+        ls_errlog-y_entry_time     = sy-uzeit.
+        APPEND ls_errlog TO gt_errlog_del.
+*        DELETE gt_errlog FROM ls_errlog.
+        CLEAR:ls_errlog.
+
+      ELSEIF is_conf-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_process_y.
+
+        ls_errlog-mandt            = sy-mandt.
+        ls_errlog-y_id_meldung     = is_conf-y_id_meldung.
+        ls_errlog-y_vorgang        = is_conf-y_vorgang.
+        ls_errlog-y_erz_tks_ident  = is_conf-y_erz_tks_ident.
+        ls_errlog-y_satztyp        = is_conf-y_satztyp.
+        ls_errlog-y_sap_conf_table = c_yppst_r1_batchup.
+        ls_errlog-y_entry_date     = sy-datum.
+        ls_errlog-y_entry_time     = sy-uzeit.
+        APPEND ls_errlog TO gt_errlog_del.
+*        DELETE gt_errlog FROM ls_errlog.
+        CLEAR:ls_errlog.
+      ENDIF.
+
+    ELSE.
+**Add the records in error log table
+      IF is_tomis-y_process_flag EQ ycl_ppst_tomis_i_prodconf=>c_error
+        AND is_conf-y_conf_flag IS INITIAL.
+
+        ls_errlog-mandt            = sy-mandt.
+        ls_errlog-y_id_meldung     = is_tomis-y_id_meldung.
+        ls_errlog-y_vorgang        = is_tomis-y_vorgang.
+        ls_errlog-y_erz_tks_ident  = is_tomis-y_erz_tks_ident.
+        ls_errlog-y_satztyp        = is_tomis-y_satztyp.
+        ls_errlog-y_sap_conf_table = c_yppst_r1_tomis.
+        ls_errlog-y_entry_date     = sy-datum.
+        ls_errlog-y_entry_time     = sy-uzeit.
+
+        READ TABLE gt_errlog ASSIGNING FIELD-SYMBOL(<ls_errlog>)
+                    WITH KEY y_id_meldung = is_tomis-y_id_meldung.
+        IF sy-subrc IS INITIAL.
+          MODIFY gt_errlog FROM ls_errlog TRANSPORTING mandt
+             y_id_meldung y_vorgang y_erz_tks_ident y_satztyp
+             y_sap_conf_table y_entry_date y_entry_time
+               WHERE y_id_meldung = ls_errlog-y_id_meldung.
+        ELSE.
+          APPEND ls_errlog TO gt_errlog.
+        ENDIF.
+
+        CLEAR:ls_errlog.
+
+      ELSEIF is_conf-y_conf_flag EQ ycl_ppst_tomis_i_prodconf=>c_error.
+
+        ls_errlog-mandt            = sy-mandt.
+        ls_errlog-y_id_meldung     = is_conf-y_id_meldung.
+        ls_errlog-y_vorgang        = is_conf-y_vorgang.
+        ls_errlog-y_erz_tks_ident  = is_conf-y_erz_tks_ident.
+        ls_errlog-y_satztyp        = is_conf-y_satztyp.
+        ls_errlog-y_sap_conf_table = c_yppst_r1_batchup.
+        ls_errlog-y_entry_date     = sy-datum.
+        ls_errlog-y_entry_time     = sy-uzeit.
+        READ TABLE gt_errlog ASSIGNING <ls_errlog>
+                    WITH KEY y_id_meldung = is_conf-y_id_meldung.
+        IF sy-subrc IS INITIAL.
+          MODIFY gt_errlog FROM ls_errlog TRANSPORTING mandt
+             y_id_meldung y_vorgang y_erz_tks_ident y_satztyp
+             y_sap_conf_table y_entry_date y_entry_time
+               WHERE y_id_meldung = ls_errlog-y_id_meldung.
+        ELSE.
+          APPEND ls_errlog TO gt_errlog.
+        ENDIF.
+        CLEAR:ls_errlog.
+      ENDIF.
+    ENDIF.
+
+  ENDMETHOD.
+**BOC for CL#25
+  METHOD batch_char.
+* Description        : To add the batch char
+    DATA: lt_char_batch TYPE TABLE OF clbatch,
+          ls_char_batch TYPE clbatch.
+
+    FIELD-SYMBOLS <lv_field> TYPE any .
+
+    LOOP AT gt_charmap ASSIGNING FIELD-SYMBOL(<ls_charmap>).
+      CASE <ls_charmap>-y_data_source.
+* Confirmation table
+        WHEN c_ct.
+          ASSIGN COMPONENT <ls_charmap>-y_sap_field OF STRUCTURE is_batch TO <lv_field>.
+          IF sy-subrc EQ 0 AND <lv_field> IS NOT INITIAL.
+            IF  <ls_charmap>-y_sap_field =  ycl_ppst_tomis_i_prodconf=>c_y_fls_ident.
+              WRITE <lv_field> TO ls_char_batch-atwtb.
+              CONDENSE ls_char_batch-atwtb.
+            ELSE.
+              CALL FUNCTION 'CONVERSION_EXIT_ALPHA_OUTPUT'
+                EXPORTING
+                  input  = <lv_field>
+                IMPORTING
+                  output = ls_char_batch-atwtb.
+            ENDIF.
+            ls_char_batch-atnam = <ls_charmap>-y_atnam.
+            CALL FUNCTION 'CONVERSION_EXIT_ATINN_INPUT'
+              EXPORTING
+                input  = ls_char_batch-atnam
+              IMPORTING
+                output = ls_char_batch-atinn.
+
+            APPEND ls_char_batch TO et_char_batch.
+            CLEAR ls_char_batch.
+          ENDIF.
+        WHEN OTHERS.
+      ENDCASE.
+    ENDLOOP.
+  ENDMETHOD.
+**EOC of CL#25
+ENDCLASS.
+
+CLASS lcl_msg_handling IMPLEMENTATION.
+  METHOD display_msg.
+* Description        : Display messages
+*- Display message with message class
+    MESSAGE ID iv_id TYPE iv_msgtype NUMBER iv_number WITH iv_msgv1 iv_msgv2 iv_msgv3 iv_msgv4 .
+
+*- Leave to selection screen
+    LEAVE LIST-PROCESSING.
+
+  ENDMETHOD.
+ENDCLASS.
